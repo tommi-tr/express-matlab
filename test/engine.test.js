@@ -20,6 +20,28 @@ test('da sinistra a destra', () => {
   assert.deepEqual(readyTexts('20-3-2'), ['20 − 3']);
   assert.deepEqual(readyTexts('12:3\\cdot2+5'), ['12 : 3']);
 });
+test('potenza e prodotto insieme', () => {
+  assert.deepEqual(readyTexts('5^2-5\\cdot3'), ['5 · 3', '5²']);
+  assert.deepEqual(readyTexts('1+2+3\\cdot4'), ['1 + 2', '3 · 4']);
+  assert.deepEqual(readyTexts('(4+1)\\cdot2+3\\cdot5'), ['3 · 5', '4 + 1']);
+});
+test('potenza con parentesi come base', () => {
+  const an = analyze(parse('(2)^3'));
+  const sel = ['2', '3'].length && an.all.find(o => o.kind === 'powEval');
+  assert.ok(sel);
+  const m = matchSelection([...sel.req, ...sel.opt], an);
+  assert.ok(m.ok);
+});
+test('proprietà obbligatorie in frazione', () => {
+  const an = analyze(parse('\\frac{2^7}{2^5}'));
+  assert.ok(an.ready.some(o => o.kind === 'fracSameBase'));
+  assert.ok(!an.ready.some(o => o.kind === 'powEval'));
+  const an2 = analyze(parse('\\frac{2^{4+3}}{2^5}'));
+  assert.ok(!an2.ready.some(o => o.kind === 'powEval' && o.text === '2⁵'));
+  assert.ok(an2.ready.some(o => o.text === '4 + 3'));
+  const off = analyze(parse('2^3\\cdot2^4'), { forceProps: false });
+  assert.ok(off.ready.some(o => o.kind === 'powEval'));
+});
 test('catene indipendenti insieme', () => {
   assert.deepEqual(readyTexts('2+3\\cdot4+5\\cdot6'), ['3 · 4', '5 · 6']);
 });
@@ -91,7 +113,6 @@ test('nessuna selezione casuale porta al blocco: ogni stato non finito ha operaz
       const an = analyze(cur);
       assert.ok(an.ready.length > 0, e.latex);
       const op = an.ready[Math.floor(Math.random() * an.ready.length)];
-      // sceglie un insieme casuale ma disgiunto
       cur = applyOps(cur, [op]);
     }
     assert.ok(isDone(cur), e.latex);

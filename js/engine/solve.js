@@ -4,27 +4,33 @@ import { applyOps } from './apply.js';
 import { parse, features, ParseError } from './parse.js';
 import * as A from './ast.js';
 
-const PREF = { bin: 0, powEval: 0, unwrap: 1, reduce: 2 };
+const PREF = { prodSameBase: 0, quotSameBase: 0, fracSameBase: 0, powOfPow: 0, bin: 1, unwrap: 1, powEval: 2, prodSameExp: 3, quotSameExp: 3, powOfProd: 3, reduce: 4 };
 
-/** sceglie le operazioni "naturali" del prossimo passo: tutte quelle pronte della priorità più alta */
-export function pickCanonical(ready) {
-  const main = ready.filter(o => o.kind !== 'reduce');
-  if (!main.length) return ready;
-  const m = Math.min(...main.map(o => o.stage));
-  const cands = main
-    .filter(o => o.stage === m)
-    .sort((a, b) => ((PREF[a.kind] ?? 3) + (a.flip ? 1 : 0)) - ((PREF[b.kind] ?? 3) + (b.flip ? 1 : 0)));
+/** sceglie il maggior numero di operazioni pronte e disgiunte (per la soluzione e la dimostrazione) */
+export function pickAll(ready) {
+  const cands = [...ready].sort((a, b) => ((PREF[a.kind] ?? 5) + (a.flip ? 10 : 0)) - ((PREF[b.kind] ?? 5) + (b.flip ? 10 : 0)));
   const used = new Set();
   const out = [];
+  const hasOther = cands.some(x => !x.flip);
   for (const c of cands) {
+    if (c.flip && hasOther) continue;
     const toks = [...c.req, ...c.opt];
     if (toks.some(t => used.has(t))) continue;
-    // le operazioni "con cambio di segno" si evitano quando c'è altro da fare
-    if (c.flip && cands.some(x => !x.flip && x !== c)) continue;
     toks.forEach(t => used.add(t));
     out.push(c);
   }
   return out;
+}
+
+/** un solo passo "naturale" (di priorità più alta), per i suggerimenti */
+export function pickSimple(ready) {
+  const main = ready.filter(o => o.kind !== 'reduce');
+  if (!main.length) return ready.slice(0, 1);
+  const props = main.filter(o => (PREF[o.kind] ?? 5) === 0);
+  if (props.length) return [props[0]];
+  const m = Math.min(...main.map(o => o.stage));
+  const c = main.filter(o => o.stage === m && !o.flip);
+  return [c[0] || main.find(o => o.stage === m)];
 }
 
 export function solve(root, cfg = {}) {
@@ -34,9 +40,9 @@ export function solve(root, cfg = {}) {
   for (let g = 0; g < 200 && !isDone(cur); g++) {
     const an = analyze(cur, cfg);
     if (!an.ready.length) throw new Error('Nessuna operazione disponibile (blocco).');
-    const pick = pickCanonical(an.ready);
+    const pick = pickAll(an.ready);
     stepOps.push(pick);
-    cur = applyOps(cur, pick);
+    cur = applyOps(cur, pick, cfg);
     states.push(cur);
   }
   if (!isDone(cur)) throw new Error('Troppi passaggi.');
@@ -59,7 +65,7 @@ const cache = new Map();
 
 /** Valida una espressione LaTeX per un certo livello. */
 export function validate(latex, level, cfg = {}) {
-  const key = `${latex}|${level}`;
+  const key = `${latex}|${level}|${cfg.signUnwrap !== false}|${!!cfg.autoUnwrap}|${cfg.forceProps !== false}`;
   if (cache.has(key)) return cache.get(key);
   const out = { ok: false, errors: [], warnings: [], latex, level };
   try {

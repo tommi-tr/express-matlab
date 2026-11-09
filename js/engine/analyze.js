@@ -1,5 +1,9 @@
 // Analisi di un'espressione: quali operazioni si possono svolgere ora (rispettando le precedenze)
 // e, per quelle che non si possono, perché.
+//
+// Regola: un'operazione si può svolgere se nessuna delle sue parti "appartiene" a un'operazione con
+// priorità più alta (o più a sinistra, a parità di priorità). Operazioni che non si toccano si possono
+// quindi svolgere insieme (es. 5² − 5·3: la potenza e il prodotto).
 import * as A from './ast.js';
 import { R, add, sub, mul, div, pw, gcd } from './rational.js';
 
@@ -7,6 +11,8 @@ export const SYM_TXT = { '+': '+', '-': '−', '*': '·', '/': ':', imp: '·' };
 const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 const sup = n => String(n).split('').map(d => SUP[+d]).join('');
 export const vt = v => (v.d === 1 ? String(v.n) : `${v.n}/${v.d}`);
+export const isReduced = v => v.d === 1 || gcd(v.n, v.d) === 1;
+
 export function termText(x) {
   if (x.t === 'val') return vt(x);
   if (x.t === 'pow') {
@@ -16,7 +22,6 @@ export function termText(x) {
   }
   return '…';
 }
-export const isReduced = v => v.d === 1 || gcd(v.n, v.d) === 1;
 
 export const STAGE_NAMES = {
   0: 'Semplificazione',
@@ -82,32 +87,50 @@ function partialsOK(operands, ops) {
 }
 
 const WHY = {
-  parentesi: () => 'Prima si svolgono le parentesi, partendo dalle più interne.',
-  potenze: () => 'Le potenze vengono prima di moltiplicazioni, divisioni, somme e sottrazioni.',
-  moltdiv: () => 'Moltiplicazioni e divisioni vengono prima di somme e sottrazioni.',
-  ordine: () => 'Le operazioni con la stessa priorità si svolgono da sinistra verso destra.',
+  parentesi: 'Quell\'operazione ha una parentesi (o una frazione) da svolgere prima.',
+  potenze: 'Le potenze vengono prima di moltiplicazioni, divisioni, somme e sottrazioni.',
+  moltdiv: 'Moltiplicazioni e divisioni vengono prima di somme e sottrazioni.',
+  ordine: 'Le operazioni con la stessa priorità si svolgono da sinistra verso destra.',
 };
 function mkWhy(cat, blocker) {
-  let msg = WHY[cat]();
-  if (blocker && blocker.text) {
-    msg += cat === 'ordine' ? ` Comincia da ${blocker.text}.` : ` Intanto tocca a ${blocker.text}.`;
-  }
+  let msg = WHY[cat];
+  if (blocker) msg += ` ${cat === 'ordine' ? 'Comincia da' : 'Intanto puoi svolgere'} ${blocker.label || blocker.text}.`;
   return { cat, msg };
+}
+const UNWRAP_LABEL = 'le parentesi (tocca quella che si apre e quella che si chiude)';
+const PROP_HINT = {
+  prod: 'Qui vale la proprietà delle potenze: stessa base, si sommano gli esponenti.',
+  quot: 'Qui vale la proprietà delle potenze: stessa base, si sottraggono gli esponenti.',
+  pp: 'Qui vale la proprietà delle potenze: potenza di potenza, si moltiplicano gli esponenti.',
+};
+
+/** potenza "riconoscibile" per le proprietà: a^m con a intero, oppure un intero (a^1) */
+function powInfo(x) {
+  if (x.t === 'pow' && x.base.t === 'val' && x.base.d === 1) {
+    const ev = A.singleVal(x.exp);
+    const known = !!(ev && ev.d === 1 && ev.n >= 0);
+    return { node: x, id: x.id, base: x.base.n, m: known ? ev.n : null, tokens: known ? [x.base.id, ev.id] : null, isVal: false };
+  }
+  if (x.t === 'val' && x.d === 1 && x.n >= 2) return { node: x, id: x.id, base: x.n, m: 1, tokens: [x.id], isVal: true };
+  return null;
 }
 
 export function analyze(root, cfg = {}) {
   const signUnwrap = cfg.signUnwrap !== false;
+  const forceProps = cfg.forceProps !== false;
   const all = [];
-  const tokenSeq = new Map();
-  const seqWhy = new Map();
+  const tokWhy = new Map();
+  const potCover = new Map();
   let nid = 0;
-  const push = o => {
+  const mk = o => {
     o.key = 'op' + (nid++);
     o.opt = o.opt || [];
-    o.ready = o.ready === undefined ? false : o.ready;
+    if (o.ready === undefined) o.ready = true;
     all.push(o);
     return o;
   };
+  const mulish = o => o.sym === '*' || o.sym === '/' || o.sym === 'imp';
+  const cover = (ids, hint) => ids.forEach(id => { if (!potCover.has(id)) potCover.set(id, hint); });
 
   function unwrapCand(sq, i, g) {
     const inner = g.inner;
@@ -117,7 +140,7 @@ export function analyze(root, cfg = {}) {
     const single = A.singleVal(inner);
     const o = {
       kind: 'unwrap', stage: 1, groupId: g.id, flip: false,
-      req: [g.id + ':o', g.id + ':c'], opt: [], text: 'le parentesi', ready: true,
+      req: [g.id + ':o', g.id + ':c'], opt: [], text: 'le parentesi', label: UNWRAP_LABEL,
     };
     if (single) {
       if (prev) o.opt.push(prev.id);
@@ -132,8 +155,12 @@ export function analyze(root, cfg = {}) {
     const operands2 = [...sq.operands];
     operands2.splice(i, 1, ...inner.operands);
     o.flip = flip;
-    o.signs = { first: termText(inner.operands[0]), items: inner.ops.map((x, k) => ({ from: x.sym, to: x.sym === '+' ? '-' : '+', term: termText(inner.operands[k + 1]) })) };
+    o.signs = {
+      first: termText(inner.operands[0]),
+      items: inner.ops.map((x, k) => ({ from: x.sym, to: x.sym === '+' ? '-' : '+', term: termText(inner.operands[k + 1]) })),
+    };
     o.text = flip ? 'le parentesi (cambiando i segni)' : 'le parentesi';
+    o.label = flip ? 'togliere le parentesi cambiando i segni' : 'togliere le parentesi';
     if (flip) o.req.push(prev.id); else if (prev) o.opt.push(prev.id);
     if (!partialsOK(operands2, ops2)) {
       o.ready = false;
@@ -142,173 +169,191 @@ export function analyze(root, cfg = {}) {
     return o;
   }
 
-  function powStuff(sq, i, x, stage1, own, extra) {
-    const b = x.base;
-    const e = x.exp;
-    tokenSeq.set(x.id, sq.id);
-    if (b.t === 'group') {
-      tokenSeq.set(b.id + ':o', sq.id); tokenSeq.set(b.id + ':c', sq.id);
-      const r = walkSeq(b.inner);
-      stage1.push(...r.r); extra.push(...r.x);
-    } else if (!isReduced(b)) {
-      extra.push(push({ kind: 'reduce', stage: 0, ready: true, req: [b.id], valId: b.id, text: `${vt(b)} ridotta` }));
-    }
-    const re = walkSeq(e);
-    stage1.push(...re.r); extra.push(...re.x);
-
-    const eVal = A.singleVal(e);
-    const bVal = b.t === 'val' ? b : (b.t === 'group' ? A.singleVal(b.inner) : null);
-    const eInt = eVal && eVal.d === 1 && eVal.n >= 0;
-    const parens = b.t === 'group' ? [b.id + ':o', b.id + ':c'] : [];
-
-    if (eInt && bVal) {
-      own.push(push({
-        kind: 'powEval', stage: 2, powId: x.id, req: [bVal.id, eVal.id], opt: parens,
-        text: `${vt(bVal)}${sup(eVal.n)}`,
-        calc: () => pw(R(bVal.n, bVal.d), eVal.n),
-      }));
-    }
-    if (b.t === 'group' && bVal && bVal.d === 1) {
-      stage1.push(push({
-        kind: 'unwrap', stage: 1, ready: true, groupId: b.id, flip: false,
-        req: [b.id + ':o', b.id + ':c'], text: 'le parentesi',
-      }));
-    }
-    if (b.t === 'group' && eInt) {
-      const inner = b.inner;
-      if (inner.operands.length === 1 && inner.operands[0].t === 'pow') {
-        const q = inner.operands[0];
-        const qb = q.base;
-        const qe = A.singleVal(q.exp);
-        if (qb.t === 'val' && qb.d === 1 && qe && qe.d === 1) {
-          stage1.push(push({
-            kind: 'powOfPow', stage: 1, ready: true, powId: x.id,
-            req: [qb.id, qe.id, eVal.id], opt: parens,
-            text: `(${qb.n}${sup(qe.n)})${sup(eVal.n)}`,
-          }));
-        }
-      }
-      if (inner.operands.length === 2 && (inner.ops[0].sym === '*' || inner.ops[0].sym === '/') &&
-          inner.operands.every(v => v.t === 'val' && v.d === 1)) {
-        const [va, vb] = inner.operands;
-        stage1.push(push({
-          kind: 'powOfProd', stage: 1, ready: true, powId: x.id, sym: inner.ops[0].sym,
-          req: [va.id, inner.ops[0].id, vb.id, eVal.id], opt: parens,
-          text: `(${va.n} ${SYM_TXT[inner.ops[0].sym]} ${vb.n})${sup(eVal.n)}`,
-        }));
-      }
-    }
-  }
-
   function walkSeq(sq) {
     const { operands, ops } = sq;
-    const stage1 = [];
-    const extra = [];
-    const own = [];
-    tokenSeq.set(sq.id, sq.id);
+    const created = [];
+    const innerC = operands.map(() => []);
+    const reg = (c, i) => { created.push(c); if (i !== undefined) innerC[i].push(c); return c; };
+    const nested = (r, i) => { created.push(...r); innerC[i].push(...r); };
 
     operands.forEach((x, i) => {
-      tokenSeq.set(x.id, sq.id);
       if (x.t === 'val') {
-        if (!isReduced(x)) {
-          extra.push(push({ kind: 'reduce', stage: 0, ready: true, req: [x.id], valId: x.id, text: `${vt(x)} ridotta`, calc: () => R(x.n, x.d) }));
-        }
+        if (!isReduced(x)) reg(mk({ kind: 'reduce', stage: 0, req: [x.id], valId: x.id, text: `${vt(x)} ridotta`, calc: () => R(x.n, x.d) }), i);
       } else if (x.t === 'group') {
-        tokenSeq.set(x.id + ':o', sq.id); tokenSeq.set(x.id + ':c', sq.id);
-        const r = walkSeq(x.inner);
-        stage1.push(...r.r); extra.push(...r.x);
+        nested(walkSeq(x.inner), i);
         const u = unwrapCand(sq, i, x);
-        if (u) { push(u); if (u.ready) stage1.push(u); }
+        if (u) reg(mk(u), i);
       } else if (x.t === 'frac') {
-        const a = walkSeq(x.num);
-        const b = walkSeq(x.den);
-        stage1.push(...a.r, ...b.r); extra.push(...a.x, ...b.x);
+        nested(walkSeq(x.num), i);
+        nested(walkSeq(x.den), i);
+        fracCand(x, i, reg);
       } else if (x.t === 'pow') {
-        powStuff(sq, i, x, stage1, own, extra);
+        powStuff(x, i, reg, nested);
       }
     });
 
-    ops.forEach((o, k) => {
-      tokenSeq.set(o.id, sq.id);
+    // ---- operazioni binarie ----
+    const binC = ops.map((o, k) => {
       const L = operands[k];
       const Rr = operands[k + 1];
-      if (L.t === 'val' && Rr.t === 'val') {
-        const mulish = o.sym === '*' || o.sym === '/' || o.sym === 'imp';
-        own.push(push({
-          kind: 'bin', stage: mulish ? 3 : 4, opIndex: k, opId: o.id, leftId: L.id, rightId: Rr.id, sym: o.sym,
-          req: o.sym === 'imp' ? [L.id, Rr.id] : [L.id, o.id, Rr.id],
-          text: `${vt(L)} ${SYM_TXT[o.sym]} ${vt(Rr)}`,
-          calc: () => {
-            const a = R(L.n, L.d); const b = R(Rr.n, Rr.d);
-            if (o.sym === '+') return add(a, b);
-            if (o.sym === '-') return sub(a, b);
-            if (o.sym === '/') return div(a, b);
-            return mul(a, b);
-          },
-        }));
+      if (!(L.t === 'val' && Rr.t === 'val')) return null;
+      return reg(mk({
+        kind: 'bin', stage: mulish(o) ? 3 : 4, opIndex: k, opId: o.id, leftId: L.id, rightId: Rr.id, sym: o.sym,
+        req: o.sym === 'imp' ? [L.id, Rr.id] : [L.id, o.id, Rr.id],
+        text: `${vt(L)} ${SYM_TXT[o.sym]} ${vt(Rr)}`,
+        calc: () => {
+          const a = R(L.n, L.d); const b = R(Rr.n, Rr.d);
+          if (o.sym === '+') return add(a, b);
+          if (o.sym === '-') return sub(a, b);
+          if (o.sym === '/') return div(a, b);
+          return mul(a, b);
+        },
+      }));
+    });
+    const firstReady = j => innerC[j].find(z => z.ready) || null;
+    const pendingKind = x => (x.t === 'pow' ? 'potenze' : 'parentesi');
+
+    ops.forEach((o, k) => {
+      const c = binC[k];
+      if (!c) {
+        const j = operands[k].t === 'val' ? k + 1 : k;
+        const cat = pendingKind(operands[j]);
+        tokWhy.set(o.id, () => mkWhy(cat, firstReady(j)));
+        return;
+      }
+      if (mulish(o)) {
+        if (k > 0 && mulish(ops[k - 1])) {
+          c.ready = false;
+          c.whyFn = () => mkWhy('ordine', binC[k - 1] || firstReady(k - 1) || firstReady(k));
+        }
+        return;
+      }
+      // addizione/sottrazione
+      if (k + 1 < ops.length && mulish(ops[k + 1])) {
+        c.ready = false;
+        const other = operands[k + 2];
+        c.whyFn = () => (other.t === 'val' ? mkWhy('moltdiv', binC[k + 1]) : mkWhy(pendingKind(other), firstReady(k + 2)));
+      } else if (k > 0 && mulish(ops[k - 1])) {
+        c.ready = false;
+        const other = operands[k - 1];
+        c.whyFn = () => (other.t === 'val' ? mkWhy('moltdiv', binC[k - 1]) : mkWhy(pendingKind(other), firstReady(k - 1)));
+      } else if (k > 0) {
+        c.ready = false;
+        c.whyFn = () => mkWhy('ordine', binC[0] || firstReady(0) || firstReady(1));
       }
     });
 
-    // proprietà delle potenze: prodotto/quoziente di potenze
+    // ---- proprietà delle potenze (prodotto e quoziente) ----
     ops.forEach((o, k) => {
       if (o.sym !== '*' && o.sym !== '/') return;
       if (k > 0 && ops[k - 1].sym === '/') return;
-      const X = operands[k];
-      const Y = operands[k + 1];
-      if (X.t !== 'pow' || Y.t !== 'pow') return;
-      const xe = A.singleVal(X.exp);
-      const ye = A.singleVal(Y.exp);
-      if (!(X.base.t === 'val' && X.base.d === 1 && Y.base.t === 'val' && Y.base.d === 1 && xe && ye)) return;
-      if (xe.d !== 1 || ye.d !== 1) return;
-      const b1 = X.base.n; const b2 = Y.base.n; const m = xe.n; const n = ye.n;
-      const req = [X.base.id, xe.id, o.id, Y.base.id, ye.id];
-      const base = { stage: 2, xId: X.id, yId: Y.id, opId: o.id, b1, b2, m, n, req, text: `${b1}${sup(m)} ${SYM_TXT[o.sym]} ${b2}${sup(n)}` };
+      const X = powInfo(operands[k]);
+      const Y = powInfo(operands[k + 1]);
+      if (!X || !Y || (X.isVal && Y.isVal)) return;
+      const known = X.tokens && Y.tokens;
+      const sameBase = X.base === Y.base;
+      const pows = [X, Y].filter(z => !z.isVal).map(z => z.id);
+      if (sameBase && (o.sym === '*' || !known || X.m >= Y.m)) cover(pows, o.sym === '*' ? PROP_HINT.prod : PROP_HINT.quot);
+      if (!known) return;
+      const base = {
+        stage: 2, xId: X.id, yId: Y.id, opId: o.id, b1: X.base, b2: Y.base, m: X.m, n: Y.m,
+        req: [...X.tokens, o.id, ...Y.tokens], covers: pows,
+        text: `${X.base}${X.isVal ? '' : sup(X.m)} ${SYM_TXT[o.sym]} ${Y.base}${Y.isVal ? '' : sup(Y.m)}`,
+      };
       if (o.sym === '*') {
-        if (b1 === b2) own.push(push({ ...base, kind: 'prodSameBase' }));
-        if (m === n) own.push(push({ ...base, kind: 'prodSameExp' }));
+        if (sameBase) reg(mk({ ...base, kind: 'prodSameBase', label: 'la proprietà delle potenze (stessa base)' }));
+        if (!X.isVal && !Y.isVal && X.m === Y.m) reg(mk({ ...base, kind: 'prodSameExp', label: 'la proprietà delle potenze (stesso esponente)' }));
       } else {
-        if (b1 === b2 && m >= n) own.push(push({ ...base, kind: 'quotSameBase' }));
-        if (m === n && b2 !== 0 && b1 % b2 === 0) own.push(push({ ...base, kind: 'quotSameExp' }));
+        if (sameBase && X.m >= Y.m) reg(mk({ ...base, kind: 'quotSameBase', label: 'la proprietà delle potenze (stessa base)' }));
+        if (!X.isVal && !Y.isVal && X.m === Y.m && Y.base !== 0 && X.base % Y.base === 0) reg(mk({ ...base, kind: 'quotSameExp', label: 'la proprietà delle potenze (stesso esponente)' }));
       }
     });
-
-    // --- priorità dentro questa catena ---
-    let why = null;
-    const readyOwn = [];
-    if (stage1.length > 0) {
-      why = mkWhy('parentesi', stage1[0]);
-      own.forEach(c => { c.ready = false; c.why = why; });
-    } else if (own.length) {
-      const m = Math.min(...own.map(c => c.stage));
-      const isLeft = c => c.opIndex === 0 ||
-        (m === 3 && (ops[c.opIndex - 1].sym === '+' || ops[c.opIndex - 1].sym === '-'));
-      const first = own.filter(c => c.stage === m && (m === 2 || isLeft(c)));
-      const blockerOf = first[0];
-      own.forEach(c => {
-        if (c.stage > m) {
-          c.ready = false;
-          c.why = mkWhy(m === 2 ? 'potenze' : 'moltdiv', blockerOf);
-          why = why || c.why;
-        } else if (m === 2) {
-          c.ready = true;
-        } else {
-          const leftmost = isLeft(c);
-          c.ready = leftmost;
-          if (!leftmost) {
-            c.why = mkWhy('ordine', first[0]);
-            why = why || c.why;
-          }
-        }
-      });
-      own.forEach(c => { if (c.ready) readyOwn.push(c); });
-    }
-    seqWhy.set(sq.id, why);
-    return { r: [...stage1, ...readyOwn], x: extra };
+    return created;
   }
 
-  const res = walkSeq(root);
-  const ready = [...res.r, ...res.x];
-  return { ready, all, tokenSeq, seqWhy };
+  function fracCand(x, i, reg) {
+    if (x.num.operands.length !== 1 || x.den.operands.length !== 1) return;
+    const X = powInfo(x.num.operands[0]);
+    const Y = powInfo(x.den.operands[0]);
+    if (!X || !Y || (X.isVal && Y.isVal) || X.base !== Y.base) return;
+    const known = X.tokens && Y.tokens;
+    if (known && X.m < Y.m) return;
+    cover([X, Y].filter(z => !z.isVal).map(z => z.id), PROP_HINT.quot);
+    if (!known) return;
+    reg(mk({
+      kind: 'fracSameBase', stage: 2, fracId: x.id, b1: X.base, m: X.m, n: Y.m, req: [...X.tokens, ...Y.tokens],
+      covers: [X, Y].filter(z => !z.isVal).map(z => z.id),
+      text: `${X.base}${X.isVal ? '' : sup(X.m)} / ${Y.base}${Y.isVal ? '' : sup(Y.m)}`, label: 'la proprietà delle potenze (stessa base)',
+    }), i);
+  }
+
+  function powStuff(x, i, reg, nested) {
+    const b = x.base;
+    const e = x.exp;
+    if (b.t === 'group') nested(walkSeq(b.inner), i);
+    else if (!isReduced(b)) reg(mk({ kind: 'reduce', stage: 0, req: [b.id], valId: b.id, text: `${vt(b)} ridotta`, calc: () => R(b.n, b.d) }), i);
+    nested(walkSeq(e), i);
+
+    const eVal = A.singleVal(e);
+    const bVal = b.t === 'val' ? b : (b.t === 'group' ? A.singleVal(b.inner) : null);
+    const eInt = !!(eVal && eVal.d === 1 && eVal.n >= 0);
+    const parens = b.t === 'group' ? [b.id + ':o', b.id + ':c'] : [];
+
+    if (eInt && bVal) {
+      reg(mk({
+        kind: 'powEval', stage: 2, powId: x.id, req: [bVal.id, eVal.id], opt: parens,
+        text: `${vt(bVal)}${sup(eVal.n)}`,
+        calc: () => pw(R(bVal.n, bVal.d), eVal.n),
+      }), i);
+    }
+    if (b.t !== 'group') return;
+    if (bVal && bVal.d === 1) {
+      reg(mk({ kind: 'unwrap', stage: 1, groupId: b.id, flip: false, req: [b.id + ':o', b.id + ':c'], text: 'le parentesi', label: UNWRAP_LABEL }), i);
+    }
+    const inner = b.inner;
+    if (inner.operands.length === 1 && inner.operands[0].t === 'pow') {
+      const q = inner.operands[0];
+      const qb = q.base;
+      const qe = A.singleVal(q.exp);
+      if (qb.t === 'val' && qb.d === 1) {
+        const qKnown = !!(qe && qe.d === 1);
+        cover([x.id, q.id], PROP_HINT.pp);
+        if (qKnown && eInt) {
+          reg(mk({
+            kind: 'powOfPow', stage: 1, powId: x.id, covers: [x.id, q.id],
+            req: [qb.id, qe.id, eVal.id], opt: parens, text: `(${qb.n}${sup(qe.n)})${sup(eVal.n)}`,
+            label: 'la proprietà delle potenze (potenza di potenza)',
+          }), i);
+        }
+      }
+    }
+    if (eInt && inner.operands.length === 2 && (inner.ops[0].sym === '*' || inner.ops[0].sym === '/') &&
+        inner.operands.every(v => v.t === 'val' && v.d === 1)) {
+      const [va, vb] = inner.operands;
+      reg(mk({
+        kind: 'powOfProd', stage: 1, powId: x.id, sym: inner.ops[0].sym,
+        req: [va.id, inner.ops[0].id, vb.id, eVal.id], opt: parens,
+        text: `(${va.n} ${SYM_TXT[inner.ops[0].sym]} ${vb.n})${sup(eVal.n)}`,
+        label: 'la proprietà delle potenze (potenza di un prodotto)',
+      }), i);
+    }
+  }
+
+  walkSeq(root);
+
+  // le proprietà delle potenze vanno usate quando si può: il calcolo diretto delle potenze coinvolte si blocca
+  if (forceProps) {
+    all.forEach(c => {
+      if (c.kind === 'powEval' && potCover.has(c.powId)) {
+        c.ready = false;
+        const msg = potCover.get(c.powId);
+        c.why = { cat: 'proprieta', msg };
+      }
+    });
+  }
+  all.forEach(c => { if (!c.ready && !c.why && c.whyFn) c.why = c.whyFn(); });
+  const ready = all.filter(c => c.ready);
+  return { ready, all, tokWhy };
 }
 
 /** Trova quali operazioni corrispondono alla selezione dell'utente. */
@@ -351,16 +396,16 @@ export function matchSelection(selection, an) {
     return { ok: false, cat: why.cat, msg: `Hai scelto «${bad.text}». ${why.msg}`, bad };
   }
 
-  // selezione che non corrisponde a un'operazione completa
   for (const t of order) {
-    const w = an.seqWhy.get(an.tokenSeq.get(t));
-    if (w) {
+    const fn = an.tokWhy.get(t);
+    if (fn) {
+      const w = fn();
       return { ok: false, cat: w.cat, msg: `Quella non è ancora un'operazione che puoi svolgere. ${w.msg}` };
     }
   }
   return {
     ok: false, cat: 'selezione',
-    msg: 'Per svolgere un\'operazione tocca tutti i suoi elementi: i numeri e il simbolo (+ − · :). Se sono più operazioni, che siano separate.',
+    msg: 'Per svolgere un\'operazione tocca tutti i suoi elementi: i numeri e il simbolo (+ − · :). Più operazioni si possono svolgere insieme, se sono separate.',
   };
 }
 
@@ -371,13 +416,13 @@ export function describeOp(op) {
       ? 'Si tolgono le parentesi: davanti c\'è un meno, quindi i segni dentro cambiano.'
       : 'Si tolgono le parentesi, che contengono ormai un solo numero.';
     case 'reduce': return 'Si semplifica la frazione ai minimi termini.';
-    case 'powEval': return `Potenza: ${op.text}`;
-    case 'prodSameBase': return 'Stessa base: si sommano gli esponenti.';
-    case 'quotSameBase': return 'Stessa base: si sottraggono gli esponenti.';
-    case 'prodSameExp': return 'Stesso esponente: si moltiplicano le basi.';
-    case 'quotSameExp': return 'Stesso esponente: si dividono le basi.';
-    case 'powOfPow': return 'Potenza di potenza: si moltiplicano gli esponenti.';
-    case 'powOfProd': return 'Potenza di un prodotto o di un quoziente: l\'esponente va su ogni fattore.';
+    case 'powEval': return `Potenze: ${op.text}`;
+    case 'prodSameBase': return 'Proprietà delle potenze: stessa base, si sommano gli esponenti.';
+    case 'quotSameBase': case 'fracSameBase': return 'Proprietà delle potenze: stessa base, si sottraggono gli esponenti.';
+    case 'prodSameExp': return 'Proprietà delle potenze: stesso esponente, si moltiplicano le basi.';
+    case 'quotSameExp': return 'Proprietà delle potenze: stesso esponente, si dividono le basi.';
+    case 'powOfPow': return 'Proprietà delle potenze: potenza di potenza, si moltiplicano gli esponenti.';
+    case 'powOfProd': return 'Proprietà delle potenze: l\'esponente va su ogni fattore.';
     default: return `${STAGE_NAMES[op.stage]}: ${op.text}`;
   }
 }

@@ -23,7 +23,7 @@ function norm(n) {
       n.den = norm(n.den);
       const a = A.singleVal(n.num);
       const b = A.singleVal(n.den);
-      if (a && b && a.d === 1 && b.d === 1 && b.n !== 0) return A.mkVal(a.n, b.n);
+      if (a && b && b.n !== 0) return valOf(div(pv(a), pv(b)));
       return n;
     }
     default: return n;
@@ -120,13 +120,39 @@ function applyOne(root, op) {
       }
       break;
     }
+    case 'fracSameBase': {
+      const np = A.mkPow(A.mkVal(op.b1), A.mkSeq([A.mkVal(op.m), A.mkVal(op.n)], [A.mkOp('-')]));
+      A.replaceNode(root, op.fracId, np);
+      break;
+    }
     default: throw new Error('operazione sconosciuta ' + op.kind);
   }
 }
 
+/** toglie le parentesi che contengono un solo numero (tranne basi razionali di potenza) */
+export function autoUnwrap(root) {
+  for (let g = 0; g < 100; g++) {
+    let target = null;
+    A.walk(root, n => {
+      if (target || n.t !== 'group') return;
+      const v = A.singleVal(n.inner);
+      if (!v) return;
+      const f = A.find(root, n.id);
+      if (f.parent && f.parent.t === 'pow' && v.d !== 1) return;
+      target = { id: n.id, v, parent: f.parent };
+    });
+    if (!target) break;
+    if (target.parent && target.parent.t === 'pow') target.parent.base = target.v;
+    else A.replaceNode(root, target.id, target.v);
+  }
+  return root;
+}
+
 /** Applica insieme più operazioni (indipendenti). Restituisce un nuovo albero. */
-export function applyOps(root, ops) {
+export function applyOps(root, ops, cfg = {}) {
   const r = A.clone(root);
   ops.forEach(op => applyOne(r, op));
-  return normalize(r);
+  normalize(r);
+  if (cfg.autoUnwrap) normalize(autoUnwrap(r));
+  return r;
 }

@@ -10,6 +10,8 @@ export const DEFAULTS = {
   penalty: 2,             // secondi di penalità in Sfida
   rounds: 3,              // round in Sfida
   perSession: 5,          // espressioni per sessione di Esercitati
+  autoUnwrap: false,      // toglie da sé le parentesi con un solo numero
+  forceProps: true,       // proprietà delle potenze obbligatorie
   signUnwrap: true,       // permette di togliere le parentesi cambiando i segni
   priorityColors: true,   // colori in base alla priorità
   hints: true,            // suggerimenti in Esercitati
@@ -39,7 +41,7 @@ export function resetSettings() { settings = { ...DEFAULTS }; write(K.settings, 
 // ---- database ----
 let custom = read(K.custom, []);
 let hidden = new Set(read(K.hidden, []));
-export const engineCfg = () => ({ signUnwrap: settings.signUnwrap });
+export const engineCfg = () => ({ signUnwrap: settings.signUnwrap, autoUnwrap: settings.autoUnwrap, forceProps: settings.forceProps });
 
 export function allExpressions(level) {
   const base = SEED.filter(e => !hidden.has(e.id)).map(e => ({ ...e, seed: true }));
@@ -106,14 +108,14 @@ export function nextExpression(level, exclude = []) {
 }
 
 /** Due espressioni diverse con lo stesso livello (e, se possibile, lo stesso numero di passaggi). */
-export function nextPair(level) {
-  const a = nextExpression(level);
+export function nextPair(level, exclude = []) {
+  const a = nextExpression(level, exclude);
   let best = null;
-  const pool = allExpressions(level).filter(e => e.latex !== a.latex && validate(e.latex, level, engineCfg()).ok).map(meta);
+  const pool = allExpressions(level).filter(e => e.latex !== a.latex && !exclude.includes(e.latex) && validate(e.latex, level, engineCfg()).ok).map(meta);
   for (const tol of [0, 1, 99]) {
     const c = pool.filter(e => Math.abs(e.steps - a.steps) <= tol);
     if (c.length) { best = c[Math.floor(Math.random() * c.length)]; break; }
   }
   if (!best) { const g = generate(level); if (g) best = meta({ id: 'g' + Math.random().toString(36).slice(2), level, latex: g.latex }); }
-  return [a, best || nextExpression(level, [a.latex])];
+  return [a, best || nextExpression(level, [a.latex, ...exclude])];
 }

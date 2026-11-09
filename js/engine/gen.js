@@ -23,7 +23,7 @@ function operand(level, depth, maxDepth, st) {
     const inner = chain(level, ri(2, 3), depth + 1, maxDepth, st);
     st.groups++;
     const g = { group: inner };
-    if (level >= 3 && Math.random() < 0.18) return { pow: g, exp: ri(2, 3) };
+    if (level >= 3 && Math.random() < 0.18) return { pow: g, exp: 2 };
     return g;
   }
   if (level >= 3 && r > 0.78 && r < 0.93) { st.pows++; return { text: `${ri(2, 5)}^${ri(2, 3)}` }; }
@@ -64,42 +64,52 @@ function toLatex(n, level) {
   return `${o}${n.group.parts.map(p => toLatex(p, level)).join('')}${c}`;
 }
 
-const L4 = [
-  () => `\\frac{${ri(1, 4)}}{${ri(5, 9)}}+\\frac{${ri(1, 4)}}{${ri(2, 4)}}\\cdot\\frac{${ri(1, 6)}}{${ri(2, 6)}}`,
-  () => `\\left(\\frac{${ri(1, 5)}}{${ri(2, 6)}}+\\frac{${ri(1, 5)}}{${ri(2, 6)}}\\right):\\frac{${ri(1, 5)}}{${ri(2, 6)}}`,
-  () => { const x = ri(2, 5); return `${x}^{${ri(2, 5)}}\\cdot${x}^{${ri(2, 4)}}:${x}^{${ri(2, 5)}}`; },
-  () => { const x = ri(2, 4); return `(${x}^{${ri(2, 3)}})^{${ri(2, 3)}}:${x}^{${ri(2, 5)}}`; },
-  () => `\\left(\\frac{${ri(1, 4)}}{${ri(2, 5)}}\\right)^2\\cdot\\frac{${ri(2, 9)}}{${ri(2, 9)}}+${ri(1, 5)}`,
-  () => `\\left[${ri(2, 3)}^{${ri(2, 4)}}:${ri(2, 3)}^{${ri(1, 3)}}+\\frac{${ri(1, 3)}}{${ri(2, 4)}}\\right]\\cdot\\frac{${ri(2, 5)}}{${ri(2, 7)}}`,
-  () => `\\frac{${ri(2, 6)}^2+${ri(2, 9)}}{${ri(2, 4)}\\cdot${ri(2, 4)}}+\\frac{${ri(1, 3)}}{${ri(2, 4)}}`,
-  () => `${ri(3, 9)}-\\left(\\frac{${ri(1, 4)}}{${ri(2, 3)}}\\right)^2:\\frac{${ri(1, 4)}}{${ri(2, 5)}}`,
-  () => { const a = ri(2, 4); const b = ri(2, 4); const n = ri(2, 3); return `${a}^${n}\\cdot${b}^${n}:${a * b}^${n}+${ri(2, 9)}`; },
+const f = () => { const d = ri(2, 6); return `\\frac{${ri(1, d - 1)}}{${d}}`; };
+const PIECES = [
+  () => { const x = ri(2, 5); return `\\frac{${x}^{${ri(2, 4)}}\\cdot${x}^{${ri(2, 3)}}}{${x}^{${ri(2, 4)}}}`; },
+  () => { const x = ri(2, 4); return `\\frac{(${x}^{${ri(2, 3)}})^{${ri(2, 3)}}}{${x}^{${ri(2, 4)}}\\cdot${x}}`; },
+  () => `\\left(${f()}\\right)^2:${f()}`,
+  () => `\\left(${f()}+${f()}\\right)\\cdot${f()}`,
+  () => `${f()}\\cdot\\left(${f()}\\right)^2`,
+  () => { const x = ri(2, 4); return `${x}^{${ri(3, 5)}}\\cdot${x}^{${ri(2, 3)}}:${x}^{${ri(2, 4)}}`; },
+  () => `\\left[${f()}+${f()}\\cdot\\left(${f()}\\right)^2\\right]:${f()}`,
+  () => `\\frac{${ri(2, 5)}+${ri(2, 4)}\\cdot${ri(2, 4)}}{${ri(2, 4)}^2+${ri(1, 3)}}`,
+  () => `\\left\\{${f()}+\\left[${f()}-${f()}\\right]\\cdot${ri(2, 5)}\\right\\}:${f()}`,
+  () => { const a = ri(2, 4); const b = ri(2, 4); const n = ri(2, 3); return `${a}^${n}\\cdot${b}^${n}:${a * b}^${n}+${f()}`; },
 ];
+const l4 = () => {
+  const n = ri(3, 4);
+  let out = pick(PIECES)();
+  for (let i = 1; i < n; i++) out += pick(['+', '-']) + pick(PIECES)();
+  return out;
+};
 
-const LIMITS = { 1: [2, 4], 2: [4, 7], 3: [5, 10], 4: [3, 8] };
+const LIMITS = { 1: [2, 3], 2: [5, 9], 3: [8, 12], 4: [6, 11] };
 
-export function generate(level, tries = 400) {
+export function generate(level, tries = 4000) {
   for (let t = 0; t < tries; t++) {
     let latex;
-    if (level === 4) latex = pick(L4)();
+    if (level === 4) latex = l4();
     else {
       const st = { groups: 0, pows: 0, fracs: 0 };
       const maxDepth = level === 1 ? 0 : level === 2 ? 2 : 3;
-      const n = level === 1 ? ri(3, 5) : ri(2, 4);
+      const n = level === 1 ? ri(3, 4) : level === 2 ? ri(3, 5) : ri(3, 4);
       const tree = { group: chain(level, n, 0, maxDepth, st) };
       if (!usefulGroups(tree.group)) continue;
       // il livello più esterno non è una parentesi
       latex = tree.group.parts.map(p => toLatex(p, level)).join('');
-      if (level >= 2 && st.groups < 1) continue;
-      if (level === 3 && (st.groups < 2)) continue;
+      if (level === 2 && st.groups < 3) continue;
+      if (level === 3 && (st.groups < 3 || st.pows < 1)) continue;
       if (level === 1 && !/\\cdot|:/.test(latex)) continue;
       if (level === 1 && !/[+-]/.test(latex)) continue;
     }
+    if (/(^|\D)(\d+)[-:]\2(?!\d)/.test(latex)) continue;
     const v = validate(latex, level);
     if (!v.ok) continue;
     const [lo, hi] = LIMITS[level];
     if (v.steps < lo || v.steps > hi) continue;
     if (/^0$/.test(v.value)) continue;
+    if (level < 4 && +v.value > 400) continue;
     return { latex, level, steps: v.steps };
   }
   return null;

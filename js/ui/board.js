@@ -3,7 +3,7 @@ import { el } from './dom.js';
 import { renderExpr, typeIn } from './render.js';
 import { analyze, matchSelection, describeOp, isDone } from '../engine/analyze.js';
 import { applyOps } from '../engine/apply.js';
-import { pickCanonical, remainingSteps } from '../engine/solve.js';
+import { pickAll, pickSimple, remainingSteps } from '../engine/solve.js';
 import { sfx } from './sound.js';
 import * as A from '../engine/ast.js';
 
@@ -98,6 +98,7 @@ export class Board {
   load(ast) {
     this.clear();
     this.root = A.clone(ast);
+    if (this.cfg.autoUnwrap) this.root = applyOps(this.root, [], this.cfg);
     this.total = Math.max(1, remainingSteps(this.root, this.cfg));
     this.stats = this.freshStats();
     this.history = [this.root];
@@ -204,7 +205,7 @@ export class Board {
     this.calcPanel.hidden = true; this.calcPanel.replaceChildren();
     this.selected = new Set();
     this.say('');
-    this.root = applyOps(this.root, ops);
+    this.root = applyOps(this.root, ops, this.cfg);
     this.history.push(this.root);
     this.stats.steps++;
     sfx.ok();
@@ -229,7 +230,7 @@ export class Board {
   // ---------- suggerimento ----------
   hint() {
     if (this.busy || this.locked || this.frozen || this.done || !this.root) return;
-    const picks = pickCanonical(this.an.ready);
+    const picks = pickSimple(this.an.ready);
     const op = picks[Math.floor(Math.random() * picks.length)];
     if (!op) return;
     this.stats.hints++;
@@ -345,7 +346,7 @@ export class Board {
   // ---------- dimostrazione ----------
   demoStep() {
     if (this.busy || this.done || !this.root) return Promise.resolve(false);
-    const ops = pickCanonical(this.an.ready);
+    const ops = pickAll(this.an.ready);
     this.selected = new Set(ops.flatMap(o => o.req));
     this.paintSelection();
     const first = ops[0];
