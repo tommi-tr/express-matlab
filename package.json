@@ -1,0 +1,10 @@
+{
+  "name": "espressioni",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sito per imparare l'ordine delle operazioni nelle espressioni",
+  "scripts": {
+    "test": "node --test"
+  }
+}

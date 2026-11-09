@@ -1,0 +1,11 @@
+{
+  "name": "Espressioni",
+  "short_name": "Espressioni",
+  "description": "Impara l'ordine delle operazioni giocando",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f2f6fa",
+  "theme_color": "#f2f6fa",
+  "lang": "it",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
