@@ -56,7 +56,7 @@ export class Board {
       o.hints ? this.btnHint : null, this.btnClear, this.btnEq);
 
     this.overlay = el('div', { class: 'lockbox', hidden: true });
-    this.root$ = el('div', { class: 'board', data: { player: o.player || '' } },
+    this.root$ = el('div', { class: 'board', data: { player: o.player || '', i: o.interactive ? '1' : '' } },
       this.head, this.paper, this.calcPanel, o.interactive ? this.foot : null, this.overlay);
     this.root$.__board = this; // utile per i test automatici
     this.host.append(this.root$);
@@ -124,7 +124,8 @@ export class Board {
       l.querySelectorAll('.sel, .err, .hint').forEach(t => t.classList.remove('sel', 'err', 'hint'));
     });
     const expr = renderExpr(root, { colors: this.S.priorityColors });
-    const line = el('div', { class: 'line current' }, el('span', { class: 'eq', text: this.history.length > 1 ? '=' : '' }), expr);
+    const line = el('div', { class: 'line current' }, el('span', { class: 'eq', text: this.history.length > 1 ? '=' : '' }), expr,
+      this.o.interactive ? el('button', { class: 'eq-inline', type: 'button', 'aria-label': 'Svolgi le operazioni selezionate', text: '=', on: { click: () => this.equals() } }) : null);
     this.lines.append(line);
     this.curExpr = expr;
     this.fit();
@@ -141,8 +142,12 @@ export class Board {
     const line = this.lines.querySelector('.line.current');
     if (!line) return;
     this.lines.style.removeProperty('--efs');
-    const avail = this.lines.clientWidth - 24;
-    const need = line.scrollWidth;
+    const pad = this.o.interactive ? 72 : 0;
+    const avail = this.lines.clientWidth - 24 - pad;
+    line.style.width = 'max-content'; line.style.maxWidth = 'none';
+    this.curExpr.style.flex = 'none';
+    const need = this.curExpr.getBoundingClientRect().width + line.firstChild.getBoundingClientRect().width + 20;
+    line.style.removeProperty('width'); line.style.removeProperty('max-width');
     if (need > avail && avail > 0) {
       const cur = parseFloat(getComputedStyle(line).fontSize);
       this.lines.style.setProperty('--efs', `${Math.max(14, cur * (avail / need) * 0.96)}px`);
@@ -323,6 +328,7 @@ export class Board {
     this.stats.penaltyMs += seconds * 1000;
     let left = seconds;
     const num = el('div', { class: 'lock-num', text: left });
+    this.overlay.className = 'lockbox';
     this.overlay.replaceChildren(el('div', { class: 'lock-title', text: `Penalità: ${seconds} secondi` }), el('p', { class: 'lock-msg', text }), num);
     this.overlay.hidden = false;
     const tick = () => {
@@ -340,6 +346,13 @@ export class Board {
     this.selected = new Set();
     this.say('');
     if (this.curExpr) this.paintSelection();
+  }
+  /** messaggio breve a tutto schermo sulla lavagna (es. «Fatto!»); con ms=0 resta finché non lo si toglie */
+  banner(title, text, cls = 'ok', ms = 0, cb = null) {
+    this.overlay.className = 'lockbox ' + cls;
+    this.overlay.replaceChildren(el('div', { class: 'lock-title', text: title }), text ? el('p', { class: 'lock-msg', text }) : null);
+    this.overlay.hidden = false;
+    if (ms) this.later(() => { this.overlay.hidden = true; this.overlay.className = 'lockbox'; cb && cb(); }, ms);
   }
   freeze() { this.frozen = true; this.busy = false; this.timers.forEach(clearTimeout); this.stopTyping && this.stopTyping(); this.root$.classList.add('frozen'); }
 

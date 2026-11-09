@@ -1,5 +1,5 @@
 import { el } from './dom.js';
-import { schemaView, levelChips, openSettings, LEVELS } from './chrome.js';
+import { schemaView, levelChips, openSettings, fullscreenBtn, LEVELS } from './chrome.js';
 import { getSettings } from '../data/store.js';
 
 export function mount(root) {
@@ -8,7 +8,7 @@ export function mount(root) {
   const screen = el('div', { class: 'screen home' },
     el('header', { class: 'home-head' },
       el('div', { class: 'brand' }, el('span', { class: 'logo', html: '<b>(</b>2<i>+</i>3<b>)</b><i>·</i>4' }), el('h1', { text: 'Espressioni' })),
-      el('button', { class: 'btn ghost icon', type: 'button', 'aria-label': 'Impostazioni', title: 'Impostazioni', html: '⚙', on: { click: () => openSettings() } })),
+      el('div', { class: 'row' }, fullscreenBtn(), el('button', { class: 'btn ghost icon', type: 'button', 'aria-label': 'Impostazioni', title: 'Impostazioni', html: '⚙', on: { click: () => openSettings() } }))),
     el('main', { class: 'home-main' },
       el('section', { class: 'home-schema' },
         el('h2', { text: 'Che cosa si fa per prima?' }),

@@ -35,6 +35,19 @@ export function calcToggle() {
   return b;
 }
 
+export function fullscreenBtn() {
+  if (!document.fullscreenEnabled) return null;
+  const b = el('button', { class: 'btn ghost icon fsbtn', type: 'button', 'aria-label': 'Schermo intero', title: 'Schermo intero', html: '⛶' });
+  const upd = () => { const on = !!document.fullscreenElement; b.setAttribute('aria-pressed', on); b.title = on ? 'Esci dallo schermo intero' : 'Schermo intero'; b.classList.toggle('active', on); };
+  b.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else document.documentElement.requestFullscreen().catch(() => {});
+  });
+  document.addEventListener('fullscreenchange', upd);
+  upd();
+  return b;
+}
+
 export function topbar({ title, levels = true, calc = true, onLevel, back = true }) {
   const bar = el('header', { class: 'topbar' },
     back ? el('a', { class: 'btn ghost back', href: '#/', 'aria-label': 'Torna alla home' }, '‹ Home') : null,
@@ -43,6 +56,7 @@ export function topbar({ title, levels = true, calc = true, onLevel, back = true
     levels ? levelChips(onLevel) : null,
     calc ? calcToggle() : null,
     el('button', { class: 'btn ghost', type: 'button', text: 'Schema', on: { click: () => openSchema() } }),
+    fullscreenBtn(),
     el('button', { class: 'btn ghost icon', type: 'button', 'aria-label': 'Impostazioni', title: 'Impostazioni', html: '⚙', on: { click: () => openSettings() } }));
   return bar;
 }
@@ -131,13 +145,15 @@ export function openSettings() {
       row('Calcoli', toggle('calc'), 'Scrivi tu il risultato di ogni operazione. Spento: li calcola il sito.'),
       row('Velocità di scrittura', seg('writeSpeed', [[0, 'Subito'], [35, 'Veloce'], [80, 'Normale'], [150, 'Lenta']]), 'Quanto in fretta compare la nuova espressione.'),
       row('Togliere le parentesi cambiando i segni', toggle('signUnwrap'), 'Permette di eliminare una parentesi con somme e sottrazioni dentro (10 − (3 + 2) → 10 − 3 − 2).'),
+      row('Togliere automaticamente le parentesi', toggle('autoUnwrap'), 'Le parentesi che racchiudono un solo numero spariscono da sole, senza doverle selezionare.'),
+      row('Proprietà delle potenze obbligatorie', toggle('forceProps'), 'Dove si può usare una proprietà (2⁷ : 2⁵, 3² · 3⁴…) bisogna usarla, non calcolare le potenze.'),
       row('Colori delle priorità', toggle('priorityColors'), 'Colora parentesi, potenze, × ÷ e + − come nello schema.'),
       row('Suggerimenti', toggle('hints'), 'Mostra il pulsante Suggerimento in Esercitati.'),
       row('Passaggi precedenti', toggle('showHistory'), 'Lascia visibili le righe già svolte.')),
     sect('Esercitati', row('Espressioni per sessione', stepper('perSession', 3, 15))),
     sect('Sfida',
       row('Penalità per ogni errore', stepper('penalty', 0, 10, 1, ' s'), 'Tempo di attesa dopo un errore. Zero la disattiva.'),
-      row('Round', seg('rounds', [[1, '1'], [3, '3'], [5, '5']]), 'Vince chi arriva per primo alla maggioranza dei round.'),
+      row('Espressioni a testa', stepper('rounds', 1, 9), 'Ognuno procede per conto suo: vince chi finisce per primo, l\'altro può arrivare in fondo.'),
       row('Giocatore a sinistra', text('p1')), row('Giocatore a destra', text('p2')),
       row('Gira la metà destra', toggle('rotateRight'), 'Per giocare uno di fronte all\'altro su un tavolo.')),
     sect('Espressioni',

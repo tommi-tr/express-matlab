@@ -6,9 +6,11 @@ import { validate } from '../engine/solve.js';
 import { fmtTime } from './practice.js';
 import { sfx } from './sound.js';
 
+// Sfida: ognuno procede per conto suo attraverso N espressioni. Vince chi finisce per primo,
+// ma l'altro può continuare fino in fondo.
 export function mount(root) {
   const S = () => getSettings();
-  let alive = true; let scores = [0, 0]; let round = 0; let roundOver = true; let token = 0;
+  let alive = true; let token = 0;
   const names = () => [S().p1, S().p2];
 
   const scoreEl = el('div', { class: 'scorebar' });
@@ -16,6 +18,12 @@ export function mount(root) {
   const ov = el('div', { class: 'arena-ov', hidden: true });
   const screen = el('div', { class: 'screen challenge' }, topbar({ title: 'Sfida a due', onLevel: () => intro() }), scoreEl, el('div', { class: 'arena-wrap' }, arena, ov));
   root.append(screen);
+
+  let boards = [];
+  let pairs = [];
+  let pl = [];
+  let over = true;
+  let order = [];
 
   const mk = i => {
     const holder = el('div', { class: 'half', data: { player: 'p' + (i + 1) } });
@@ -27,82 +35,143 @@ export function mount(root) {
       onDone: stats => finished(i, stats),
     });
   };
-  let boards = [];
+  const fresh = () => ({ idx: 0, done: false, finishAt: 0, rows: [], t0: 0, errors: 0, penaltyMs: 0 });
   function build() {
     boards.forEach(b => b.destroy());
     arena.replaceChildren();
     boards = [mk(0), mk(1)];
+    pl = [fresh(), fresh()];
+    order = [];
     paintScore();
   }
-  function paintScore() {
-    const need = Math.floor(S().rounds / 2) + 1;
-    scoreEl.replaceChildren(
-      el('div', { class: 'sc p1' }, el('span', { text: names()[0] }), el('b', { text: scores[0] })),
-      el('div', { class: 'sc mid' }, el('span', { text: round ? `Round ${Math.min(round, S().rounds)} di ${S().rounds}` : `Al meglio di ${S().rounds}` }), el('small', { text: `livello ${S().level} ${LEVELS[S().level - 1].name} · penalità ${S().penalty} s${S().rounds > 1 ? ` · ne servono ${need}` : ''}` })),
-      el('div', { class: 'sc p2' }, el('b', { text: scores[1] }), el('span', { text: names()[1] })));
+  const N = () => Math.max(1, S().rounds);
+
+  function dots(i) {
+    const d = el('span', { class: 'dots', 'aria-label': `${pl[i]?.idx || 0} di ${N()}` });
+    for (let k = 0; k < N(); k++) d.append(el('i', { class: (pl[i] && k < pl[i].idx ? 'on ' : '') + (pl[i] && !pl[i].done && k === pl[i].idx && !over ? 'cur' : '') }));
+    return d;
   }
-  function show(content, cls = '') { ov.className = 'arena-ov ' + cls; ov.hidden = false; ov.replaceChildren(el('div', { class: 'card' }, content)); ov.querySelector('button')?.focus(); }
+  function paintScore() {
+    const first = order[0];
+    const mid = el('div', { class: 'sc mid' },
+      el('span', { text: `${N()} ${N() === 1 ? 'espressione' : 'espressioni'} a testa` }),
+      el('small', { text: `livello ${S().level} ${LEVELS[S().level - 1].name} · penalità ${S().penalty} s` }));
+    if (!over && first !== undefined) {
+      mid.append(el('button', { class: 'btn ghost', type: 'button', text: 'Termina ora', on: { click: () => results() } }));
+    }
+    scoreEl.replaceChildren(
+      el('div', { class: 'sc p1' }, el('span', { text: names()[0] }), dots(0), first === 0 ? el('span', { class: 'fin', text: 'ha finito' }) : null),
+      mid,
+      el('div', { class: 'sc p2' }, first === 1 ? el('span', { class: 'fin', text: 'ha finito' }) : null, dots(1), el('span', { text: names()[1] })));
+  }
+  function show(content, cls = '', plain = false) {
+    ov.className = 'arena-ov ' + cls + (plain ? ' plain' : '');
+    ov.hidden = false;
+    ov.replaceChildren(plain ? content : el('div', { class: 'card' }, content));
+    ov.querySelector('button')?.focus();
+  }
   function hide() { ov.hidden = true; }
 
   function intro() {
     token++;
-    scores = [0, 0]; round = 0; roundOver = true;
+    over = true;
     build();
     show(el('div', { class: 'intro' },
       el('h2', { text: 'Sfida a due' }),
       el('ul', { class: 'rules' },
-        el('li', { text: 'Ognuno ha la sua metà dello schermo e un\'espressione diversa, dello stesso livello.' }),
+        el('li', { text: `Ognuno ha la sua metà dello schermo e ${N()} ${N() === 1 ? 'espressione' : 'espressioni'} da svolgere, dello stesso livello.` }),
         el('li', { text: 'Tocca i numeri e il simbolo di ogni operazione da svolgere, poi premi «=».' }),
         el('li', { text: `Se scegli un'operazione che non ha la precedenza, aspetti ${S().penalty} secondi.` }),
-        el('li', { text: 'Vince il round chi arriva per primo al risultato.' })),
-      el('button', { class: 'btn primary big', type: 'button', text: 'Pronti', on: { click: nextRound } })));
+        el('li', { text: 'Vince chi finisce per primo, ma l\'altro può arrivare comunque in fondo.' })),
+      el('button', { class: 'btn primary big', type: 'button', text: 'Pronti', on: { click: start } })));
   }
 
-  async function nextRound() {
+  function loadFor(i) {
+    const e = pairs[pl[i].idx][i];
+    const b = boards[i];
+    b.load(validate(e.latex, e.level, engineCfg()).ast);
+    pl[i].t0 = Date.now();
+    paintScore();
+  }
+
+  async function start() {
     const my = ++token;
-    round++; roundOver = true; paintScore();
     build();
-    const pair = nextPair(S().level);
+    const used = [];
+    pairs = [];
+    for (let k = 0; k < N(); k++) {
+      const pr = nextPair(S().level, used);
+      pr.forEach(e => used.push(e.latex));
+      pairs.push(pr);
+    }
     for (const c of ['3', '2', '1']) {
       if (!alive || my !== token) return;
-      show(el('div', { class: 'count', text: c })); sfx.tick(); await sleep(800);
+      show(el('div', { class: 'count', text: c }), '', true); sfx.tick(); await sleep(800);
     }
     if (!alive || my !== token) return;
-    show(el('div', { class: 'count go', text: 'Via!' })); sfx.go();
-    boards.forEach((b, i) => b.load(validate(pair[i].latex, pair[i].level, engineCfg()).ast));
-    roundOver = false;
+    show(el('div', { class: 'count go', text: 'Via!' }), '', true); sfx.go();
+    over = false;
+    loadFor(0); loadFor(1);
     await sleep(500);
     if (my === token) hide();
   }
 
   function finished(i, stats) {
-    if (roundOver) return;
-    roundOver = true;
-    boards[1 - i].freeze();
-    scores[i]++; paintScore(); sfx.win();
-    const need = Math.floor(S().rounds / 2) + 1;
-    const matchOver = scores[i] >= need || round >= S().rounds;
-    setTimeout(() => {
-      if (!alive) return;
-      const st = boards.map(b => b.stats);
-      const table = el('table', { class: 'rtable' },
-        el('tr', {}, el('th'), el('th', { text: names()[0] }), el('th', { text: names()[1] })),
-        el('tr', {}, el('td', { text: 'Passaggi' }), el('td', { text: st[0].steps }), el('td', { text: st[1].steps })),
-        el('tr', {}, el('td', { text: 'Errori' }), el('td', { text: st[0].errors }), el('td', { text: st[1].errors })),
-        el('tr', {}, el('td', { text: 'Tempo' }), el('td', { text: fmtTime(Date.now() - st[0].t0) }), el('td', { text: fmtTime(Date.now() - st[1].t0) })));
-      if (!matchOver) {
-        show(el('div', { class: 'result' }, el('h2', { text: `Punto per ${names()[i]}` }), table,
-          el('button', { class: 'btn primary big', type: 'button', text: 'Prossimo round', on: { click: nextRound } })), 'p' + (i + 1));
-      } else {
-        const w = scores[0] === scores[1] ? -1 : scores[0] > scores[1] ? 0 : 1;
-        show(el('div', { class: 'result final' },
-          el('h2', { text: w < 0 ? 'Pareggio!' : `Vince ${names()[w]}!` }),
-          el('p', { class: 'big', text: `${scores[0]} – ${scores[1]}` }), table,
-          el('div', { class: 'row' },
-            el('button', { class: 'btn primary big', type: 'button', text: 'Rivincita', on: { click: intro } }),
-            el('a', { class: 'btn ghost', href: '#/', text: 'Home' }))), w < 0 ? '' : 'p' + (w + 1));
-      }
-    }, 900);
+    if (over) return;
+    const p = pl[i];
+    const now = Date.now();
+    p.rows.push({ ms: now - p.t0, steps: stats.steps, errors: stats.errors, penaltyMs: stats.penaltyMs });
+    p.errors += stats.errors; p.penaltyMs += stats.penaltyMs;
+    p.idx++;
+    const my = token;
+    if (p.idx < N()) {
+      sfx.ok();
+      boards[i].banner('Fatto!', `${p.idx} di ${N()}`, 'ok', 900, () => { if (alive && my === token && !over) loadFor(i); });
+      paintScore();
+      return;
+    }
+    p.done = true; p.finishAt = now; order.push(i);
+    boards[i].freeze();
+    sfx.win();
+    const other = pl[1 - i];
+    if (other.done) {
+      boards[i].banner('Finito!', '', 'ok');
+      paintScore();
+      setTimeout(() => alive && my === token && results(), 900);
+    } else {
+      boards[i].banner('Hai finito!', `Per primo. Aspetta ${names()[1 - i]}…`, 'ok');
+      paintScore();
+    }
+  }
+
+  function results() {
+    if (over) return;
+    over = true; token++;
+    boards.forEach(b => b.freeze());
+    const fin = pl.map(p => p.done);
+    let w = -1;
+    if (fin[0] && fin[1]) w = pl[0].finishAt <= pl[1].finishAt ? 0 : 1;
+    else if (fin[0]) w = 0; else if (fin[1]) w = 1;
+    paintScore();
+    const total = i => pl[i].rows.reduce((a, r) => a + r.ms, 0);
+    const rows = [];
+    for (let k = 0; k < N(); k++) {
+      rows.push(el('tr', {}, el('td', { text: `Espr. ${k + 1}` }),
+        ...[0, 1].map(i => el('td', { text: pl[i].rows[k] ? fmtTime(pl[i].rows[k].ms) : '—' }))));
+    }
+    const table = el('table', { class: 'rtable' },
+      el('tr', {}, el('th'), el('th', { text: names()[0] }), el('th', { text: names()[1] })),
+      el('tr', {}, el('td', { text: 'Completate' }), ...[0, 1].map(i => el('td', { text: `${pl[i].idx} / ${N()}` }))),
+      ...rows,
+      el('tr', {}, el('td', { text: 'Errori' }), ...[0, 1].map(i => el('td', { text: pl[i].errors + boards[i].stats.errors * (pl[i].done ? 0 : 1) }))),
+      el('tr', {}, el('td', { text: 'Penalità' }), ...[0, 1].map(i => el('td', { text: `${Math.round((pl[i].penaltyMs + (pl[i].done ? 0 : boards[i].stats.penaltyMs)) / 1000)} s` }))),
+      el('tr', {}, el('td', { text: 'Tempo totale' }), ...[0, 1].map(i => el('td', { text: fin[i] ? fmtTime(total(i)) : '—' }))));
+    show(el('div', { class: 'result final' },
+      el('h2', { text: w < 0 ? 'Nessuno ha finito' : `Vince ${names()[w]}!` }),
+      table,
+      el('div', { class: 'row' },
+        el('button', { class: 'btn primary big', type: 'button', text: 'Rivincita', on: { click: start } }),
+        el('a', { class: 'btn ghost', href: '#/', text: 'Home' }))), w < 0 ? '' : 'p' + (w + 1));
   }
 
   const onKey = e => { if (e.key === 'Escape') boards.forEach(b => b.clearSelection()); };

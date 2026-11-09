@@ -193,6 +193,11 @@ a { color: inherit; }
 .line:first-child { margin-top: auto; }
 .line:last-child { margin-bottom: auto; }
 .line .eq { width: .8em; text-align: right; color: var(--muted); font-weight: 800; flex: none; }
+.line.current { position: relative; width: 100%; }
+.board[data-i="1"] .line.current { padding-right: 72px; }
+.eq-inline { position: absolute; right: .4rem; top: 50%; transform: translateY(-50%); width: 3.4rem; height: 3.4rem; border-radius: 50%; border: 3px solid var(--ink); background: var(--c-par); color: #fff; font-family: inherit; font-weight: 800; font-size: 2rem; line-height: 1; padding: 0; cursor: pointer; box-shadow: var(--shadow); display: grid; place-items: center; }
+.eq-inline:active { transform: translateY(-50%) scale(.94); }
+.board.done .eq-inline, .line.past .eq-inline { display: none; }
 .line.past { font-size: .6em; opacity: .6; }
 .board.nohist .line.past { display: none; }
 .msg { position: absolute; left: .8rem; right: .8rem; bottom: .7rem; text-align: center; font-size: 1.1rem; font-weight: 600; line-height: 1.35; padding: .5rem .8rem; border-radius: .7rem; }
@@ -268,6 +273,7 @@ a { color: inherit; }
 .calc-actions { display: flex; gap: .6rem; }
 
 /* ---------- penalità ---------- */
+.lockbox.ok { background: color-mix(in srgb, var(--ok) 90%, #000 10%); }
 .lockbox { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: .8rem; padding: 1.5rem; border-radius: 1rem; background: color-mix(in srgb, var(--err) 88%, #000 12%); color: #fff; }
 .lock-title { font-size: 1.8rem; font-weight: 800; }
 .lock-msg { font-size: 1.25rem; line-height: 1.4; max-width: 30rem; }
@@ -310,7 +316,9 @@ a { color: inherit; }
 .half .lines { --efs: clamp(1.6rem, 2.9vw, 3.4rem); }
 .arena-ov { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; background: color-mix(in srgb, var(--paper) 86%, transparent); padding: 1rem; }
 .arena-ov.p1 .card { border-color: var(--p1); } .arena-ov.p2 .card { border-color: var(--p2); }
-.count { font-size: 12rem; font-weight: 800; line-height: 1; animation: pop .8s ease; }
+.arena-ov { overflow: hidden; }
+.arena-ov.plain { background: color-mix(in srgb, var(--paper) 90%, transparent); }
+.count { font-size: min(12rem, 30vmin); font-weight: 800; line-height: 1; animation: pop .8s ease; }
 .count.go { color: var(--ok); }
 .intro h2, .result h2 { font-size: 2.2rem; margin-bottom: .8rem; }
 .rules { text-align: left; padding-left: 1.2rem; display: grid; gap: .5rem; margin: 0 0 1.4rem; line-height: 1.4; }
@@ -358,5 +366,13 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 @media (max-width: 720px) {
   .arena { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
   .half[data-player="p2"] { border-left: 0; border-top: 4px solid var(--ink); }
-  .count { font-size: 7rem; }
 }
+
+/* Sfida: avanzamento indipendente */
+.dots { display: inline-flex; gap: .3rem; }
+.dots i { width: .9rem; height: .9rem; border-radius: 50%; border: 2px solid currentColor; display: inline-block; }
+.dots i.on { background: currentColor; }
+.dots i.cur { box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 30%, transparent); }
+.sc .fin { font-size: .85rem; background: var(--ok); color: #fff; border-radius: 999px; padding: .1rem .6rem; }
+.sc.mid .btn { margin-top: .2rem; padding: .25rem .9rem; min-height: 0; font-size: .9rem; }
+.fsbtn { min-width: 2.6rem; }
