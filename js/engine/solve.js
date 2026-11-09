@@ -7,7 +7,8 @@ import * as A from './ast.js';
 const PREF = { prodSameBase: 0, quotSameBase: 0, fracSameBase: 0, powOfPow: 0, bin: 1, unwrap: 1, powEval: 2, prodSameExp: 3, quotSameExp: 3, powOfProd: 3, reduce: 4 };
 
 /** sceglie il maggior numero di operazioni pronte e disgiunte (per la soluzione e la dimostrazione) */
-export function pickAll(ready) {
+export function pickAll(ready0) {
+  const ready = ready0.filter(c => c.kind !== 'bin' || c.canon);
   const cands = [...ready].sort((a, b) => ((PREF[a.kind] ?? 5) + (a.flip ? 10 : 0)) - ((PREF[b.kind] ?? 5) + (b.flip ? 10 : 0)));
   const used = new Set();
   const out = [];
@@ -23,7 +24,8 @@ export function pickAll(ready) {
 }
 
 /** un solo passo "naturale" (di priorità più alta), per i suggerimenti */
-export function pickSimple(ready) {
+export function pickSimple(ready0) {
+  const ready = ready0.filter(c => c.kind !== 'bin' || c.canon);
   const main = ready.filter(o => o.kind !== 'reduce');
   if (!main.length) return ready.slice(0, 1);
   const props = main.filter(o => (PREF[o.kind] ?? 5) === 0);

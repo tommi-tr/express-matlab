@@ -376,3 +376,7 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 .sc .fin { font-size: .85rem; background: var(--ok); color: #fff; border-radius: 999px; padding: .1rem .6rem; }
 .sc.mid .btn { margin-top: .2rem; padding: .25rem .9rem; min-height: 0; font-size: .9rem; }
 .fsbtn { min-width: 2.6rem; }
+
+/* Errori da trovare */
+.btn.warn { border-color: var(--err); color: var(--err); background: var(--err-soft); font-weight: 700; }
+.line.wrong > :not(.eq) { color: var(--err); text-decoration: line-through; text-decoration-thickness: .07em; opacity: .85; }

@@ -169,7 +169,7 @@ export function analyze(root, cfg = {}) {
     return o;
   }
 
-  function walkSeq(sq) {
+  function walkSeq(sq, parentGroup = null) {
     const { operands, ops } = sq;
     const created = [];
     const innerC = operands.map(() => []);
@@ -180,7 +180,7 @@ export function analyze(root, cfg = {}) {
       if (x.t === 'val') {
         if (!isReduced(x)) reg(mk({ kind: 'reduce', stage: 0, req: [x.id], valId: x.id, text: `${vt(x)} ridotta`, calc: () => R(x.n, x.d) }), i);
       } else if (x.t === 'group') {
-        nested(walkSeq(x.inner), i);
+        nested(walkSeq(x.inner, x), i);
         const u = unwrapCand(sq, i, x);
         if (u) reg(mk(u), i);
       } else if (x.t === 'frac') {
@@ -192,55 +192,98 @@ export function analyze(root, cfg = {}) {
       }
     });
 
-    // ---- operazioni binarie ----
-    const binC = ops.map((o, k) => {
-      const L = operands[k];
-      const Rr = operands[k + 1];
-      if (!(L.t === 'val' && Rr.t === 'val')) return null;
-      return reg(mk({
-        kind: 'bin', stage: mulish(o) ? 3 : 4, opIndex: k, opId: o.id, leftId: L.id, rightId: Rr.id, sym: o.sym,
-        req: o.sym === 'imp' ? [L.id, Rr.id] : [L.id, o.id, Rr.id],
-        text: `${vt(L)} ${SYM_TXT[o.sym]} ${vt(Rr)}`,
-        calc: () => {
-          const a = R(L.n, L.d); const b = R(Rr.n, Rr.d);
-          if (o.sym === '+') return add(a, b);
-          if (o.sym === '-') return sub(a, b);
-          if (o.sym === '/') return div(a, b);
-          return mul(a, b);
-        },
-      }));
-    });
-    const firstReady = j => innerC[j].find(z => z.ready) || null;
-    const pendingKind = x => (x.t === 'pow' ? 'potenze' : 'parentesi');
-
-    ops.forEach((o, k) => {
-      const c = binC[k];
-      if (!c) {
-        const j = operands[k].t === 'val' ? k + 1 : k;
-        const cat = pendingKind(operands[j]);
-        tokWhy.set(o.id, () => mkWhy(cat, firstReady(j)));
-        return;
+    // ---- operazioni tra numeri (anche catene: 2 + 1 − 1, oppure «+ 1 − 1» dentro 2 + 1 − 1) ----
+    const isAdd = x => x === '+' || x === '-';
+    const inv = x => (x === '+' ? '-' : x === '-' ? '+' : (x === '/' ? '*' : '/'));
+    const norm = x => (x === 'imp' ? '*' : x);
+    const allInt = vs => vs.every(v => v.d === 1);
+    const bin1 = ops.map(() => null);
+    const specs = [];
+    for (let i = 0; i < operands.length; i++) {
+      if (operands[i].t !== 'val') continue;
+      for (let j = i + 1; j < operands.length && operands[j].t === 'val'; j++) {
+        const seg = ops.slice(i, j);
+        const add = isAdd(seg[0].sym);
+        if (!seg.every(o => isAdd(o.sym) === add)) break;
+        specs.push({ i, j, isA: add });
       }
-      if (mulish(o)) {
-        if (k > 0 && mulish(ops[k - 1])) {
-          c.ready = false;
-          c.whyFn = () => mkWhy('ordine', binC[k - 1] || firstReady(k - 1) || firstReady(k));
+    }
+    specs.sort((x, y) => (y.j - y.i) - (x.j - x.i));
+    const made = [];
+    for (const { i, j, isA } of specs) {
+      const count = j - i;
+      const seg = ops.slice(i, j);
+      const vals = operands.slice(i, j + 1);
+      const prev = i > 0 ? ops[i - 1] : null;
+      const next = j < ops.length ? ops[j] : null;
+      const flip = !!prev && (isA ? prev.sym === '-' : prev.sym === '/');
+      const syms = seg.map(o => (flip ? inv(norm(o.sym)) : norm(o.sym)));
+      let r = null;
+      let neg = false;
+      try {
+        r = R(vals[0].n, vals[0].d);
+        for (let m = 0; m < syms.length; m++) {
+          const v = R(vals[m + 1].n, vals[m + 1].d);
+          r = syms[m] === '+' ? add(r, v) : syms[m] === '-' ? sub(r, v) : syms[m] === '*' ? mul(r, v) : div(r, v);
+          if (r.n < 0) { neg = true; break; }
         }
-        return;
+      } catch (e) { r = null; }
+      if (!r && !neg) continue;
+      const c = {
+        kind: 'bin', stage: isA ? 4 : 3, leftId: vals[0].id, count, flip, sym: seg[0].sym, opId: seg[0].id,
+        canon: count === 1 && !flip && (isA ? i === 0 : (i === 0 || isAdd(prev.sym))),
+        req: [], opt: [], i, j,
+        text: vals.map((v, m) => (m ? `${SYM_TXT[seg[m - 1].sym]} ` : '') + vt(v)).join(' '),
+        calc: () => r,
+      };
+      c.req = [vals[0].id, ...vals.slice(1).flatMap((v, m) => (seg[m].sym === 'imp' ? [v.id] : [seg[m].id, v.id]))];
+      if (prev) c.opt.push(prev.id);
+      if (parentGroup && i === 0 && j === operands.length - 1) {
+        c.opt.push(parentGroup.id + ':o', parentGroup.id + ':c');
+        c.unwrapGroup = parentGroup.id;
       }
-      // addizione/sottrazione
-      if (k + 1 < ops.length && mulish(ops[k + 1])) {
-        c.ready = false;
-        const other = operands[k + 2];
-        c.whyFn = () => (other.t === 'val' ? mkWhy('moltdiv', binC[k + 1]) : mkWhy(pendingKind(other), firstReady(k + 2)));
-      } else if (k > 0 && mulish(ops[k - 1])) {
-        c.ready = false;
-        const other = operands[k - 1];
-        c.whyFn = () => (other.t === 'val' ? mkWhy('moltdiv', binC[k - 1]) : mkWhy(pendingKind(other), firstReady(k - 1)));
-      } else if (k > 0) {
-        c.ready = false;
-        c.whyFn = () => mkWhy('ordine', binC[0] || firstReady(0) || firstReady(1));
+      let why = null;
+      if (neg) why = { cat: 'segni', msg: 'Così uscirebbe un numero negativo: nei numeri naturali non si può togliere un numero più grande.' };
+      else if (isA) {
+        if (prev && mulish(prev)) why = { cat: 'moltdiv', side: 'L' };
+        else if (next && mulish(next)) why = { cat: 'moltdiv', side: 'R' };
+        else if (flip || i > 0 || count > 1) {
+          const ops2 = [...ops.slice(0, i), ...ops.slice(j)];
+          const op2 = [...operands.slice(0, i), { t: 'val', n: r.n, d: r.d }, ...operands.slice(j + 1)];
+          if (!partialsOK(op2, ops2)) why = { cat: 'segni', msg: 'Così uscirebbe un numero negativo: nei numeri naturali non si può togliere un numero più grande.' };
+        }
+      } else if (i > 0 && mulish(prev) && r.d !== 1 && allInt(vals)) {
+        why = { cat: 'ordine', side: 'L' };
       }
+      if (why) {
+        if (count > 1) continue;
+        c.ready = false;
+        c.whyInfo = why;
+      }
+      const cand = mk(c);
+      made.push(cand);
+      if (count === 1) bin1[i] = cand;
+      reg(cand, undefined);
+    }
+    const firstReady = jj => innerC[jj].find(z => z.ready) || null;
+    const pendingKind = x => (x.t === 'pow' ? 'potenze' : 'parentesi');
+    made.forEach(c => {
+      if (c.ready || !c.whyInfo) return;
+      const w = c.whyInfo;
+      if (w.msg) { c.why = { cat: w.cat, msg: w.msg }; return; }
+      c.whyFn = () => {
+        if (w.cat === 'ordine') return mkWhy('ordine', bin1[c.i - 1] || firstReady(c.i - 1) || firstReady(c.i));
+        const k = w.side === 'R' ? c.j : c.i - 1; // operatore moltiplicativo adiacente
+        const other = w.side === 'R' ? operands[c.j + 1] : operands[c.i - 1];
+        if (other.t === 'val') return mkWhy('moltdiv', bin1[k]);
+        return mkWhy(pendingKind(other), firstReady(w.side === 'R' ? c.j + 1 : c.i - 1));
+      };
+    });
+    ops.forEach((o, k) => {
+      if (bin1[k]) return;
+      const j = operands[k].t === 'val' ? k + 1 : k;
+      const cat = pendingKind(operands[j]);
+      tokWhy.set(o.id, () => mkWhy(cat, firstReady(j)));
     });
 
     // ---- proprietà delle potenze (prodotto e quoziente) ----
@@ -290,7 +333,7 @@ export function analyze(root, cfg = {}) {
   function powStuff(x, i, reg, nested) {
     const b = x.base;
     const e = x.exp;
-    if (b.t === 'group') nested(walkSeq(b.inner), i);
+    if (b.t === 'group') nested(walkSeq(b.inner, b), i);
     else if (!isReduced(b)) reg(mk({ kind: 'reduce', stage: 0, req: [b.id], valId: b.id, text: `${vt(b)} ridotta`, calc: () => R(b.n, b.d) }), i);
     nested(walkSeq(e), i);
 
@@ -371,6 +414,7 @@ export function matchSelection(selection, an) {
       for (const c of cands) {
         if (chosen.includes(c)) continue;
         const opt = c.opt.filter(x => S.has(x));
+        if (c.unwrapGroup && !(S.has(c.unwrapGroup + ':o') && S.has(c.unwrapGroup + ':c')) && opt.some(x => x.startsWith(c.unwrapGroup + ':'))) continue;
         const toks = [...c.req, ...opt];
         if (!toks.includes(t)) continue;
         if (!c.req.every(x => S.has(x))) continue;
@@ -386,8 +430,9 @@ export function matchSelection(selection, an) {
     dfs(new Set(), []);
     return found;
   };
+  const flagged = list => list.map(c => (c.unwrapGroup && S.has(c.unwrapGroup + ':o') && S.has(c.unwrapGroup + ':c') ? { ...c, withUnwrap: true } : c));
   const okCover = run(an.all.filter(c => c.ready));
-  if (okCover) return { ok: true, ops: okCover };
+  if (okCover) return { ok: true, ops: flagged(okCover) };
 
   const anyCover = run(an.all);
   if (anyCover) {

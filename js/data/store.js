@@ -10,6 +10,7 @@ export const DEFAULTS = {
   penalty: 2,             // secondi di penalità in Sfida
   rounds: 3,              // round in Sfida
   perSession: 5,          // espressioni per sessione di Esercitati
+  errorMode: false,       // ogni tanto compare un errore da riconoscere e correggere
   autoUnwrap: false,      // toglie da sé le parentesi con un solo numero
   forceProps: true,       // proprietà delle potenze obbligatorie
   signUnwrap: true,       // permette di togliere le parentesi cambiando i segni

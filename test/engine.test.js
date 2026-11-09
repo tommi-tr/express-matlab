@@ -17,8 +17,47 @@ test('parentesi per prime', () => {
   assert.deepEqual(readyTexts('(8-2)\\cdot3+4'), ['8 − 2']);
 });
 test('da sinistra a destra', () => {
-  assert.deepEqual(readyTexts('20-3-2'), ['20 − 3']);
-  assert.deepEqual(readyTexts('12:3\\cdot2+5'), ['12 : 3']);
+  assert.ok(readyTexts('20-3-2').includes('20 − 3'));
+  assert.deepEqual(readyTexts('12:3\\cdot2+5'), ['12 : 3', '12 : 3 · 2']);
+  assert.ok(!readyTexts('12:3\\cdot2+5').includes('3 · 2'));
+});
+const selTexts = (src, toks) => {
+  const root = parse(src); const an = analyze(root);
+  const ids = [];
+  root.operands.forEach((v, k) => { ids.push(v.id); if (root.ops[k]) ids.push(root.ops[k].id); });
+  return { root, an, ids, m: matchSelection(toks(root, an, ids), an) };
+};
+test('catena di somme e sottrazioni tutta insieme', () => {
+  const { root, m } = selTexts('2+1-1', (r, an, ids) => ids);
+  assert.ok(m.ok);
+  const out = applyOps(root, m.ops);
+  assert.equal(out.operands[0].n, 2);
+  assert.equal(out.operands.length, 1);
+});
+test('anche «+1-1» in 2+1-1 si può fare', () => {
+  const { root, m, ids } = selTexts('2+1-1', (r, an, ids) => ids.slice(1));
+  assert.ok(m.ok, m.msg);
+  const out = applyOps(root, m.ops);
+  assert.deepEqual(out.operands.map(v => v.n), [2, 0]);
+});
+test('sottrazione: 10-3+2 selezionando 3+2 cambia il segno', () => {
+  const { root, m } = selTexts('10-3+2', (r, an, ids) => ids.slice(1));
+  assert.ok(m.ok, m.msg);
+  const out = applyOps(root, m.ops);
+  assert.deepEqual(out.operands.map(v => v.n), [10, 1]);
+  const bad = selTexts('10-3+20', (r, an, ids) => ids.slice(1));
+  assert.equal(bad.m.ok, false);
+});
+test('somma dentro parentesi con le parentesi selezionate', () => {
+  const root = parse('(3+2)\\cdot4');
+  const an = analyze(root);
+  const g = root.operands[0];
+  const sel = [...g.inner.operands.map(o => o.id), g.inner.ops[0].id, g.id + ':o', g.id + ':c'];
+  const m = matchSelection(sel, an);
+  assert.ok(m.ok, m.msg);
+  const out = applyOps(root, m.ops);
+  assert.equal(out.operands[0].t, 'val');
+  assert.equal(out.operands[0].n, 5);
 });
 test('potenza e prodotto insieme', () => {
   assert.deepEqual(readyTexts('5^2-5\\cdot3'), ['5 · 3', '5²']);
@@ -123,4 +162,23 @@ test('parser: errori comprensibili', () => {
   assert.equal(validate('2,5+1', 1).ok, false);
   assert.equal(validate('3-5', 1).ok, false); // negativo
   assert.equal(validate('(1+2', 1).ok, false);
+});
+test('modalità errori: la riga sbagliata è diversa da quella giusta', async () => {
+  const { corrupt } = await import('../js/engine/mistake.js');
+  let made = 0;
+  for (const e of SEED) {
+    let cur = parse(e.latex);
+    for (let i = 0; i < 40 && !isDone(cur); i++) {
+      const an = analyze(cur);
+      const ops = [an.ready[Math.floor(Math.random() * an.ready.length)]];
+      const nxt = applyOps(cur, ops);
+      const bad = corrupt(cur, nxt, ops);
+      if (bad) {
+        made++;
+        assert.notEqual(JSON.stringify(bad, (k, v) => (k === 'id' ? undefined : v)), JSON.stringify(nxt, (k, v) => (k === 'id' ? undefined : v)));
+      }
+      cur = nxt;
+    }
+  }
+  assert.ok(made > 50);
 });

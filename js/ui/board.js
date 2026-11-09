@@ -5,11 +5,12 @@ import { analyze, matchSelection, describeOp, isDone } from '../engine/analyze.j
 import { applyOps } from '../engine/apply.js';
 import { pickAll, pickSimple, remainingSteps } from '../engine/solve.js';
 import { sfx } from './sound.js';
+import { corrupt } from '../engine/mistake.js';
 import * as A from '../engine/ast.js';
 
 const CAT_LABEL = {
   parentesi: 'Parentesi', potenze: 'Potenze', moltdiv: 'Moltiplicazioni e divisioni', ordine: 'Ordine da sinistra a destra',
-  segni: 'Segni', selezione: 'Selezione incompleta', calcolo: 'Calcoli',
+  segni: 'Segni', errore: 'Riconoscere gli errori', selezione: 'Selezione incompleta', calcolo: 'Calcoli',
 };
 export const catLabel = c => CAT_LABEL[c] || c;
 
@@ -51,9 +52,10 @@ export class Board {
 
     this.btnHint = el('button', { class: 'btn ghost', type: 'button', text: 'Suggerimento', on: { click: () => this.hint() } });
     this.btnClear = el('button', { class: 'btn ghost', type: 'button', text: 'Annulla selezione', on: { click: () => this.clearSelection() } });
+    this.btnFix = el('button', { class: 'btn warn', type: 'button', text: 'C\'è un errore', 'aria-label': 'Correggi l\'errore nell\'ultimo passaggio', hidden: true, on: { click: () => this.fixError() } });
     this.btnEq = el('button', { class: 'btn eq', type: 'button', 'aria-label': 'Svolgi le operazioni selezionate', text: '=', on: { click: () => this.equals() } });
     this.foot = el('div', { class: 'board-foot' },
-      o.hints ? this.btnHint : null, this.btnClear, this.btnEq);
+      o.hints ? this.btnHint : null, this.btnFix, this.btnClear, this.btnEq);
 
     this.overlay = el('div', { class: 'lockbox', hidden: true });
     this.root$ = el('div', { class: 'board', data: { player: o.player || '', i: o.interactive ? '1' : '' } },
@@ -68,6 +70,9 @@ export class Board {
       if (!line || !line.classList.contains('current')) return;
       this.press(tk.dataset.tk);
     });
+    this.onSet = () => { this.btnFix.hidden = !(this.o.interactive && this.S.errorMode); };
+    this.onSet();
+    document.addEventListener('settings', this.onSet);
     this.onResize = () => this.fit();
     window.addEventListener('resize', this.onResize);
   }
@@ -76,6 +81,7 @@ export class Board {
     this.timers.forEach(clearTimeout);
     this.stopTyping && this.stopTyping();
     window.removeEventListener('resize', this.onResize);
+    document.removeEventListener('settings', this.onSet);
     this.root$.remove();
   }
   later(fn, ms) { const t = setTimeout(fn, ms); this.timers.push(t); return t; }
@@ -88,6 +94,7 @@ export class Board {
     this.msg.textContent = ''; this.msg.className = 'msg';
     this.calcPanel.hidden = true; this.calcPanel.replaceChildren();
     this.overlay.hidden = true;
+    this.faulty = null; this.faultCount = 0; this.btnFix.hidden = !(this.o.interactive && this.S.errorMode);
     this.root = null; this.selected = new Set(); this.busy = false; this.locked = false; this.frozen = false; this.done = false;
     this.root$.classList.remove('done', 'shake', 'locked');
     this.stepsPill.textContent = '';
@@ -117,10 +124,10 @@ export class Board {
     }
   }
 
-  addLine(root, animate) {
+  addLine(root, animate, wrongPrev = false) {
     this.root$.classList.toggle('nohist', !this.S.showHistory);
     this.lines.querySelectorAll('.line.current').forEach(l => {
-      l.classList.remove('current'); l.classList.add('past');
+      l.classList.remove('current'); l.classList.add('past'); if (wrongPrev) l.classList.add('wrong');
       l.querySelectorAll('.sel, .err, .hint').forEach(t => t.classList.remove('sel', 'err', 'hint'));
     });
     const expr = renderExpr(root, { colors: this.S.priorityColors });
@@ -164,6 +171,7 @@ export class Board {
   }
   press(id) {
     if (this.busy || this.locked || this.frozen || this.done || !this.calcPanel.hidden) return;
+    if (this.faulty) { this.say('C\'è un errore nell\'ultimo passaggio! Trovalo e premi «C\'è un errore».', 'info'); return; }
     if (this.selected.has(id)) this.selected.delete(id); else this.selected.add(id);
     sfx.tap();
     this.say('');
@@ -183,6 +191,7 @@ export class Board {
   // ---------- "=" ----------
   equals() {
     if (this.busy || this.locked || this.frozen || this.done || !this.calcPanel.hidden || !this.root) return;
+    if (this.faulty) { this.fail({ ok: false, cat: 'errore', msg: 'Nell\'ultimo passaggio c\'è un errore e non l\'hai corretto! Prima di proseguire premi «C\'è un errore».' }); return; }
     const m = matchSelection([...this.selected], this.an);
     if (m.empty) { this.say(m.msg, 'info'); return; }
     if (!m.ok) { this.fail(m); return; }
@@ -210,18 +219,38 @@ export class Board {
     this.calcPanel.hidden = true; this.calcPanel.replaceChildren();
     this.selected = new Set();
     this.say('');
+    const before = this.root;
     this.root = applyOps(this.root, ops, this.cfg);
     this.history.push(this.root);
     this.stats.steps++;
     sfx.ok();
-    this.addLine(this.root, true);
+    let shown = this.root;
+    this.faulty = null;
+    if (this.o.interactive && this.S.errorMode && this.faultCount < 2 && Math.random() < 0.35) {
+      const bad = corrupt(before, this.root, ops);
+      if (bad) { this.faulty = bad; this.faultCount++; shown = bad; }
+    }
+    this.addLine(shown, true);
     this.refreshAnalysis();
     this.updateMeta();
     this.o.onStep && this.o.onStep(this);
   }
 
+  fixError() {
+    if (this.busy || this.locked || this.frozen || this.done || !this.root || !this.calcPanel.hidden) return;
+    if (!this.faulty) {
+      this.fail({ ok: false, cat: 'errore', msg: 'Qui non c\'è nessun errore: l\'ultimo passaggio è giusto. Vai avanti con le operazioni.' });
+      return;
+    }
+    this.faulty = null;
+    this.selected = new Set();
+    sfx.ok();
+    this.say('Bene, l\'errore c\'era! Ecco la riga corretta.', 'info');
+    this.addLine(this.root, true, true);
+  }
+
   afterTyped() {
-    if (!this.done && isDone(this.root)) this.finish();
+    if (!this.done && !this.faulty && isDone(this.root)) this.finish();
   }
 
   finish() {
@@ -235,6 +264,7 @@ export class Board {
   // ---------- suggerimento ----------
   hint() {
     if (this.busy || this.locked || this.frozen || this.done || !this.root) return;
+    if (this.faulty) { this.stats.hints++; this.say('Suggerimento · ricontrolla con calma l\'ultimo passaggio: un calcolo o un segno non torna.', 'info'); return; }
     const picks = pickSimple(this.an.ready);
     const op = picks[Math.floor(Math.random() * picks.length)];
     if (!op) return;

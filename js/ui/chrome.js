@@ -35,6 +35,15 @@ export function calcToggle() {
   return b;
 }
 
+export function errToggle() {
+  const b = el('button', { class: 'chip tog', type: 'button', role: 'switch', title: 'Ogni tanto compare un errore: riconoscilo e correggilo' }, el('i', { class: 'knob' }), el('span', { text: 'Errori' }));
+  const paint = () => { const on = getSettings().errorMode; b.setAttribute('aria-checked', on); b.classList.toggle('on', on); };
+  b.addEventListener('click', () => setSettings({ errorMode: !getSettings().errorMode }));
+  document.addEventListener('settings', paint);
+  paint();
+  return b;
+}
+
 export function fullscreenBtn() {
   if (!document.fullscreenEnabled) return null;
   const b = el('button', { class: 'btn ghost icon fsbtn', type: 'button', 'aria-label': 'Schermo intero', title: 'Schermo intero', html: '⛶' });
@@ -55,6 +64,7 @@ export function topbar({ title, levels = true, calc = true, onLevel, back = true
     el('div', { class: 'spacer' }),
     levels ? levelChips(onLevel) : null,
     calc ? calcToggle() : null,
+    calc ? errToggle() : null,
     el('button', { class: 'btn ghost', type: 'button', text: 'Schema', on: { click: () => openSchema() } }),
     fullscreenBtn(),
     el('button', { class: 'btn ghost icon', type: 'button', 'aria-label': 'Impostazioni', title: 'Impostazioni', html: '⚙', on: { click: () => openSettings() } }));
@@ -142,6 +152,7 @@ const sect = (t, ...rows) => el('section', { class: 'ssec' }, el('h3', { text: t
 export function openSettings() {
   const body = el('div', { class: 'settings' },
     sect('Svolgimento',
+      row('Errori da trovare', toggle('errorMode'), 'Ogni tanto compare un passaggio sbagliato: va riconosciuto e corretto con il pulsante «C\'è un errore» prima di proseguire.'),
       row('Calcoli', toggle('calc'), 'Scrivi tu il risultato di ogni operazione. Spento: li calcola il sito.'),
       row('Velocità di scrittura', seg('writeSpeed', [[0, 'Subito'], [35, 'Veloce'], [80, 'Normale'], [150, 'Lenta']]), 'Quanto in fretta compare la nuova espressione.'),
       row('Togliere le parentesi cambiando i segni', toggle('signUnwrap'), 'Permette di eliminare una parentesi con somme e sottrazioni dentro (10 − (3 + 2) → 10 − 3 − 2).'),

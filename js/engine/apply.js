@@ -39,16 +39,25 @@ function applyOne(root, op) {
     case 'bin': {
       const f = A.findOperand(root, op.leftId);
       const { seq, i } = f;
-      const L = pv(seq.operands[i]); const Rr = pv(seq.operands[i + 1]);
-      const s = seq.ops[i].sym;
-      let r;
-      if (s === '+') r = add(L, Rr);
-      else if (s === '-') r = sub(L, Rr);
-      else if (s === '/') r = div(L, Rr);
-      else r = mul(L, Rr);
-      if (r.n < 0) throw new RangeError('negativo');
-      seq.operands.splice(i, 2, valOf(r));
-      seq.ops.splice(i, 1);
+      const count = op.count || 1;
+      const inv = x => (x === '+' ? '-' : x === '-' ? '+' : x === '/' ? '*' : '/');
+      let r = pv(seq.operands[i]);
+      for (let m = 0; m < count; m++) {
+        let s = seq.ops[i + m].sym === 'imp' ? '*' : seq.ops[i + m].sym;
+        if (op.flip) s = inv(s);
+        const v = pv(seq.operands[i + m + 1]);
+        r = s === '+' ? add(r, v) : s === '-' ? sub(r, v) : s === '/' ? div(r, v) : mul(r, v);
+        if (r.n < 0) throw new RangeError('negativo');
+      }
+      seq.operands.splice(i, count + 1, valOf(r));
+      seq.ops.splice(i, count);
+      if (op.withUnwrap) {
+        const g = A.find(root, op.unwrapGroup);
+        const v = g && A.singleVal(g.node.inner);
+        if (v) {
+          if (g.parent.t === 'pow') { if (v.d === 1) g.parent.base = v; } else A.replaceNode(root, g.node.id, v);
+        }
+      }
       break;
     }
     case 'powEval': {
