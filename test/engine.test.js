@@ -175,7 +175,8 @@ test('modalità errori: la riga sbagliata è diversa da quella giusta', async ()
       const bad = corrupt(cur, nxt, ops);
       if (bad) {
         made++;
-        assert.notEqual(JSON.stringify(bad, (k, v) => (k === 'id' ? undefined : v)), JSON.stringify(nxt, (k, v) => (k === 'id' ? undefined : v)));
+        assert.ok(bad.accept.length > 0);
+        assert.notEqual(JSON.stringify(bad.root, (k, v) => (k === 'id' ? undefined : v)), JSON.stringify(nxt, (k, v) => (k === 'id' ? undefined : v)));
       }
       cur = nxt;
     }

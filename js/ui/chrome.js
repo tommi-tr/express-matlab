@@ -152,7 +152,7 @@ const sect = (t, ...rows) => el('section', { class: 'ssec' }, el('h3', { text: t
 export function openSettings() {
   const body = el('div', { class: 'settings' },
     sect('Svolgimento',
-      row('Errori da trovare', toggle('errorMode'), 'Ogni tanto compare un passaggio sbagliato: va riconosciuto e corretto con il pulsante «C\'è un errore» prima di proseguire.'),
+      row('Errori da trovare', toggle('errorMode'), 'Ogni tanto compare un passaggio sbagliato: si seleziona l\'elemento sbagliato e si preme «È un errore» prima di proseguire.'),
       row('Calcoli', toggle('calc'), 'Scrivi tu il risultato di ogni operazione. Spento: li calcola il sito.'),
       row('Velocità di scrittura', seg('writeSpeed', [[0, 'Subito'], [35, 'Veloce'], [80, 'Normale'], [150, 'Lenta']]), 'Quanto in fretta compare la nuova espressione.'),
       row('Togliere le parentesi cambiando i segni', toggle('signUnwrap'), 'Permette di eliminare una parentesi con somme e sottrazioni dentro (10 − (3 + 2) → 10 − 3 − 2).'),

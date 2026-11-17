@@ -1,5 +1,5 @@
 // Una "lavagna" di gioco: mostra l'espressione, gestisce selezione, "=", errori, calcoli, suggerimenti.
-import { el } from './dom.js';
+import { el, tap } from './dom.js';
 import { renderExpr, typeIn } from './render.js';
 import { analyze, matchSelection, describeOp, isDone } from '../engine/analyze.js';
 import { applyOps } from '../engine/apply.js';
@@ -50,10 +50,14 @@ export class Board {
     this.paper = el('div', { class: 'paper' }, this.lines, this.msg);
     this.calcPanel = el('div', { class: 'calc', hidden: true });
 
-    this.btnHint = el('button', { class: 'btn ghost', type: 'button', text: 'Suggerimento', on: { click: () => this.hint() } });
-    this.btnClear = el('button', { class: 'btn ghost', type: 'button', text: 'Annulla selezione', on: { click: () => this.clearSelection() } });
-    this.btnFix = el('button', { class: 'btn warn', type: 'button', text: 'C\'è un errore', 'aria-label': 'Correggi l\'errore nell\'ultimo passaggio', hidden: true, on: { click: () => this.fixError() } });
-    this.btnEq = el('button', { class: 'btn eq', type: 'button', 'aria-label': 'Svolgi le operazioni selezionate', text: '=', on: { click: () => this.equals() } });
+    this.btnHint = el('button', { class: 'btn ghost', type: 'button', text: 'Suggerimento' });
+    tap(this.btnHint, () => this.hint());
+    this.btnClear = el('button', { class: 'btn ghost', type: 'button', text: 'Annulla selezione' });
+    tap(this.btnClear, () => this.clearSelection());
+    this.btnFix = el('button', { class: 'btn warn', type: 'button', text: 'È un errore', 'aria-label': 'Segnala come errore gli elementi selezionati', hidden: true });
+    tap(this.btnFix, () => this.fixError());
+    this.btnEq = el('button', { class: 'btn eq', type: 'button', 'aria-label': 'Svolgi le operazioni selezionate', text: '=' });
+    tap(this.btnEq, () => this.equals());
     this.foot = el('div', { class: 'board-foot' },
       o.hints ? this.btnHint : null, this.btnFix, this.btnClear, this.btnEq);
 
@@ -63,7 +67,7 @@ export class Board {
     this.root$.__board = this; // utile per i test automatici
     this.host.append(this.root$);
 
-    this.lines.addEventListener('click', e => {
+    tap(this.lines, e => {
       const tk = e.target.closest('[data-tk]');
       if (!tk || !this.o.interactive) return;
       const line = tk.closest('.line');
@@ -132,7 +136,7 @@ export class Board {
     });
     const expr = renderExpr(root, { colors: this.S.priorityColors });
     const line = el('div', { class: 'line current' }, el('span', { class: 'eq', text: this.history.length > 1 ? '=' : '' }), expr,
-      this.o.interactive ? el('button', { class: 'eq-inline', type: 'button', 'aria-label': 'Svolgi le operazioni selezionate', text: '=', on: { click: () => this.equals() } }) : null);
+      this.o.interactive ? tap(el('button', { class: 'eq-inline', type: 'button', 'aria-label': 'Svolgi le operazioni selezionate', text: '=' }), () => this.equals()) : null);
     this.lines.append(line);
     this.curExpr = expr;
     this.fit();
@@ -170,8 +174,7 @@ export class Board {
     }
   }
   press(id) {
-    if (this.busy || this.locked || this.frozen || this.done || !this.calcPanel.hidden) return;
-    if (this.faulty) { this.say('C\'è un errore nell\'ultimo passaggio! Trovalo e premi «C\'è un errore».', 'info'); return; }
+    if (this.locked || this.frozen || this.done || !this.calcPanel.hidden) return;
     if (this.selected.has(id)) this.selected.delete(id); else this.selected.add(id);
     sfx.tap();
     this.say('');
@@ -191,7 +194,7 @@ export class Board {
   // ---------- "=" ----------
   equals() {
     if (this.busy || this.locked || this.frozen || this.done || !this.calcPanel.hidden || !this.root) return;
-    if (this.faulty) { this.fail({ ok: false, cat: 'errore', msg: 'Nell\'ultimo passaggio c\'è un errore e non l\'hai corretto! Prima di proseguire premi «C\'è un errore».' }); return; }
+    if (this.faulty) { this.fail({ ok: false, cat: 'errore', msg: 'Nell\'ultimo passaggio c\'era un errore e non l\'hai riconosciuto! Selezionalo e premi «È un errore».' }); return; }
     const m = matchSelection([...this.selected], this.an);
     if (m.empty) { this.say(m.msg, 'info'); return; }
     if (!m.ok) { this.fail(m); return; }
@@ -228,7 +231,7 @@ export class Board {
     this.faulty = null;
     if (this.o.interactive && this.S.errorMode && this.faultCount < 2 && Math.random() < 0.35) {
       const bad = corrupt(before, this.root, ops);
-      if (bad) { this.faulty = bad; this.faultCount++; shown = bad; }
+      if (bad) { this.faulty = bad; this.faultCount++; shown = bad.root; }
     }
     this.addLine(shown, true);
     this.refreshAnalysis();
@@ -238,8 +241,18 @@ export class Board {
 
   fixError() {
     if (this.busy || this.locked || this.frozen || this.done || !this.root || !this.calcPanel.hidden) return;
+    const sel = [...this.selected];
+    if (!sel.length) {
+      this.say('Seleziona l\'elemento che secondo te è sbagliato (un numero o un segno), poi premi «È un errore».', 'info');
+      return;
+    }
     if (!this.faulty) {
       this.fail({ ok: false, cat: 'errore', msg: 'Qui non c\'è nessun errore: l\'ultimo passaggio è giusto. Vai avanti con le operazioni.' });
+      return;
+    }
+    const acc = new Set(this.faulty.accept);
+    if (!sel.every(id => acc.has(id))) {
+      this.fail({ ok: false, cat: 'errore', msg: sel.some(id => acc.has(id)) ? 'Hai selezionato anche elementi giusti: scegli solo quello sbagliato.' : 'L\'errore non è lì. Ricontrolla con calma i calcoli dell\'ultimo passaggio.' });
       return;
     }
     this.faulty = null;
@@ -283,7 +296,7 @@ export class Board {
         const field = el('button', { class: 'cfield', type: 'button', text: '' });
         row.append(el('span', { class: 'clabel', text: `${op.text} =` }), field);
         row.val = ''; row.field = field; row.op = op; row.type = 'num';
-        field.addEventListener('click', () => setActive(row));
+        tap(field, () => setActive(row));
       } else {
         row.type = 'signs'; row.op = op; row.toggles = [];
         row.append(el('span', { class: 'clabel', text: 'Togli le parentesi: scrivi i nuovi segni' }));
@@ -291,7 +304,7 @@ export class Board {
         op.signs.items.forEach(it => {
           const b = el('button', { class: 'sgn', type: 'button', text: it.from === '+' ? '+' : '−' });
           b.sym = it.from;
-          b.addEventListener('click', () => { b.sym = b.sym === '+' ? '-' : '+'; b.textContent = b.sym === '+' ? '+' : '−'; b.classList.remove('bad'); });
+          tap(b, () => { b.sym = b.sym === '+' ? '-' : '+'; b.textContent = b.sym === '+' ? '+' : '−'; b.classList.remove('bad'); });
           row.toggles.push({ b, it });
           seq.append(b, el('span', { class: 'cterm', text: it.term }));
         });
@@ -310,8 +323,10 @@ export class Board {
       active.field.classList.remove('bad');
     };
     const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '/', 'del'].map(k =>
-      el('button', { class: 'key', type: 'button', text: k === 'del' ? '⌫' : k === '/' ? '⁄' : k, 'aria-label': k === 'del' ? 'Cancella' : k === '/' ? 'Frazione' : k, on: { click: () => { sfx.tap(); press(k); } } }));
-    const ok = el('button', { class: 'btn eq conf', type: 'button', text: 'Conferma', on: { click: () => confirm() } });
+      el('button', { class: 'key', type: 'button', text: k === 'del' ? '⌫' : k === '/' ? '⁄' : k, 'aria-label': k === 'del' ? 'Cancella' : k === '/' ? 'Frazione' : k, data: { k } }));
+    keys.forEach(kb => tap(kb, () => { sfx.tap(); press(kb.dataset.k); }));
+    const ok = el('button', { class: 'btn eq conf', type: 'button', text: 'Conferma' });
+    tap(ok, () => confirm());
     const confirm = () => {
       const bad = [];
       let worst = null;
@@ -345,7 +360,7 @@ export class Board {
       el('div', { class: 'calc-title', text: 'Scrivi i risultati' }),
       el('div', { class: 'crows' }, rows),
       el('div', { class: 'calc-bottom' }, kp, el('div', { class: 'calc-actions' },
-        el('button', { class: 'btn ghost', type: 'button', text: 'Torna all\'espressione', on: { click: () => { this.calcPanel.hidden = true; this.say(''); } } }), ok)));
+        tap(el('button', { class: 'btn ghost', type: 'button', text: 'Torna all\'espressione' }), () => { this.calcPanel.hidden = true; this.say(''); }), ok)));
     this.calcPanel.hidden = false;
     if (active) setActive(active);
   }

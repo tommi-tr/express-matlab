@@ -19,13 +19,21 @@ export function corrupt(oldRoot, newRoot, ops) {
   const old = idsOf(oldRoot);
   const cands = [];
   A.walk(newRoot, (n, parent) => {
-    if (n.t === 'val' && !old.has(n.id) && !(parent && parent.t === 'seq' && parent.operands.length === 1 && false)) cands.push({ type: 'val', id: n.id });
-    if (n.t === 'pow' && !old.has(n.id) && n.exp.t === 'seq' && n.exp.ops.length === 1) cands.push({ type: 'exp', id: n.exp.ops[0].id });
+    if (n.t === 'val' && !old.has(n.id)) cands.push({ type: 'val', id: n.id, accept: [n.id] });
+    if (n.t === 'pow' && !old.has(n.id) && n.exp.t === 'seq' && n.exp.ops.length === 1) {
+      cands.push({ type: 'exp', id: n.exp.ops[0].id, accept: [n.exp.ops[0].id, ...n.exp.operands.map(x => x.id)] });
+    }
   });
   for (const o of ops) {
     if (o.kind === 'unwrap' && o.flip) {
       const g = A.find(oldRoot, o.groupId);
-      if (g) g.node.inner.ops.forEach(io => cands.push({ type: 'sign', id: io.id, weight: 3 }));
+      if (g) {
+        g.node.inner.ops.forEach(io => {
+          let nxt = null;
+          A.walk(newRoot, q => { if (q.t === 'seq') { const k = q.ops.findIndex(x => x.id === io.id); if (k >= 0) nxt = q.operands[k + 1]; } });
+          cands.push({ type: 'sign', id: io.id, weight: 3, accept: [io.id, ...(nxt ? [nxt.id] : [])] });
+        });
+      }
     }
   }
   if (!cands.length) return null;
@@ -48,5 +56,5 @@ export function corrupt(oldRoot, newRoot, ops) {
     if (!o || !before) return null;
     o.sym = before.sym;
   }
-  return bad;
+  return { root: bad, accept: c.accept };
 }

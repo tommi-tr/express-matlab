@@ -16,3 +16,14 @@ export function el(tag, props = {}, ...kids) {
 }
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** Tocco immediato: reagisce subito al contatto (anche con più dita sulla lavagna) invece di aspettare il «click».
+ *  Il click da tastiera o da codice (detail 0) funziona comunque. */
+export function tap(node, fn) {
+  node.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    fn(e);
+  });
+  node.addEventListener('click', e => { if (e.detail === 0) fn(e); });
+  return node;
+}

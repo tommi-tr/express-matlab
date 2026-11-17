@@ -380,3 +380,7 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 /* Errori da trovare */
 .btn.warn { border-color: var(--err); color: var(--err); background: var(--err-soft); font-weight: 700; }
 .line.wrong > :not(.eq) { color: var(--err); text-decoration: line-through; text-decoration-thickness: .07em; opacity: .85; }
+
+/* tocco immediato, anche con molte dita */
+.board button, .board [data-tk], .keypad .key, .eq-inline { touch-action: none; -webkit-touch-callout: none; user-select: none; }
+.tk { -webkit-user-select: none; user-select: none; }
