@@ -21,7 +21,8 @@ export function mount(root) {
           el('a', { class: 'btn big duel', href: '#/sfida' }, el('b', { text: 'Sfida a due' }), el('small', { text: 'Schermo diviso: vince chi arriva per primo' }))),
         el('div', { class: 'more' },
           el('a', { class: 'btn ghost', href: '#/dimostrazione', text: 'Dimostrazione' }),
-          el('a', { class: 'btn ghost', href: '#/database', text: 'Database di espressioni' })))));
+          el('a', { class: 'btn ghost', href: '#/database', text: 'Database' }),
+          el('a', { class: 'btn ghost sm', href: 'espressione-lunghissima.html', title: 'Un\'espressione lunghissima da leggere e scomporre', text: 'Espressione lunghissima' })))));
   paint();
   root.append(screen);
   return () => {};

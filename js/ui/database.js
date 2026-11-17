@@ -78,7 +78,7 @@ export function mount(root) {
     document.body.append(a); a.click(); a.remove();
   };
 
-  root.append(el('div', { class: 'screen db' }, topbar({ title: 'Database di espressioni', levels: false, calc: false }),
+  root.append(el('div', { class: 'screen db' }, topbar({ title: 'Database', levels: false, calc: false }),
     el('main', { class: 'db-main' },
       el('section', { class: 'dbadd' },
         el('h2', { text: 'Aggiungi un\'espressione' }),
